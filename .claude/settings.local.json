@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "nx-mcp": {
+      "command": "C:\\Program Files\\Siemens\\NX2206\\NXBIN\\python.exe",
+      "args": ["-m", "nx_mcp.server"],
+      "env": {
+        "UGII_BASE_DIR": "C:\\Program Files\\Siemens\\NX2206",
+        "PYTHONPATH": "C:\\projects\\nx_mcp\\src"
+      }
+    }
+  }
+}
