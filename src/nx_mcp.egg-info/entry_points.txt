@@ -1,2 +1,4 @@
 [console_scripts]
 nx-mcp = nx_mcp.server:main
+nx-mcp-http = nx_mcp.http_server:main
+nx-mcp-nx = nx_mcp.nx_bridge:main

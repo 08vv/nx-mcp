@@ -1,11 +1,27 @@
-import NXOpen
+import os
+
+from ..bridge import runner
 from ..tools.registry import mcp_tool
 from ..nx_session import NXSession
 from ..response import ToolResult, ToolError
 
+
+def _use_mock_nxopen():
+    return os.environ.get("NX_MCP_USE_MOCK_NXOPEN") == "1"
+
+
+def _bridge_result(result):
+    if result.get("ok"):
+        return ToolResult(result.get("message", "OK"))
+    return ToolError(result.get("error", "NX bridge command failed"))
+
 @mcp_tool("extrude", "Extrude active sketch by distance mm")
 def extrude(distance: float, start: float = 0.0):
     try:
+        if not _use_mock_nxopen():
+            return _bridge_result(
+                runner.call_nx("extrude", {"distance": distance, "start": start})
+            )
         b = NXSession.work_part().Features.CreateExtrudeBuilder(None)
         b.Limits.StartExtend.Value.RightHandSide = str(start)
         b.Limits.EndExtend.Value.RightHandSide   = str(distance)
@@ -25,8 +41,9 @@ def revolve(axis: str = "Z", angle_deg: float = 360.0):
 @mcp_tool("boolean_unite", "Unite two solid bodies")
 def boolean_unite(target: str, tool: str):
     try:
+        nxopen = NXSession.nxopen()
         b = NXSession.work_part().Features.CreateBooleanBuilder(None)
-        b.Operation = NXOpen.Features.BooleanBuilder.BooleanType.Unite
+        b.Operation = nxopen.Features.BooleanBuilder.BooleanType.Unite
         b.CommitFeature(); b.Destroy()
         return ToolResult(f"United '{target}' + '{tool}'")
     except Exception as e: return ToolError(str(e))
@@ -34,8 +51,9 @@ def boolean_unite(target: str, tool: str):
 @mcp_tool("boolean_subtract", "Subtract tool body from target body")
 def boolean_subtract(target: str, tool: str):
     try:
+        nxopen = NXSession.nxopen()
         b = NXSession.work_part().Features.CreateBooleanBuilder(None)
-        b.Operation = NXOpen.Features.BooleanBuilder.BooleanType.Subtract
+        b.Operation = nxopen.Features.BooleanBuilder.BooleanType.Subtract
         b.CommitFeature(); b.Destroy()
         return ToolResult(f"Subtracted '{tool}' from '{target}'")
     except Exception as e: return ToolError(str(e))

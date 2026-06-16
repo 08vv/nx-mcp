@@ -1,4 +1,4 @@
-import sys, os
+import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from nx_mcp.tools import file_ops, sketch, modeling, assembly, measure, utility

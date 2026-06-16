@@ -1,7 +1,9 @@
 pyproject.toml
 src/nx_mcp/__init__.py
 src/nx_mcp/http_server.py
+src/nx_mcp/nx_bridge.py
 src/nx_mcp/nx_session.py
+src/nx_mcp/nxopen_loader.py
 src/nx_mcp/response.py
 src/nx_mcp/server.py
 src/nx_mcp.egg-info/PKG-INFO
@@ -10,6 +12,10 @@ src/nx_mcp.egg-info/dependency_links.txt
 src/nx_mcp.egg-info/entry_points.txt
 src/nx_mcp.egg-info/requires.txt
 src/nx_mcp.egg-info/top_level.txt
+src/nx_mcp/journals/__init__.py
+src/nx_mcp/journals/validate_nxopen.py
+src/nx_mcp/testing/__init__.py
+src/nx_mcp/testing/mock_nxopen.py
 src/nx_mcp/tools/__init__.py
 src/nx_mcp/tools/assembly.py
 src/nx_mcp/tools/file_ops.py
@@ -20,4 +26,5 @@ src/nx_mcp/tools/sketch.py
 src/nx_mcp/tools/utility.py
 src/nx_mcp/utils/__init__.py
 src/nx_mcp/utils/geometry.py
+tests/test_nx_bridge.py
 tests/test_tools.py

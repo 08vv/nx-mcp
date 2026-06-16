@@ -1,4 +1,3 @@
-import NXOpen
 from ..tools.registry import mcp_tool
 from ..nx_session import NXSession
 from ..response import ToolResult, ToolError
