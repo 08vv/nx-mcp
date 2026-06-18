@@ -15,6 +15,27 @@ def _bridge_result(result):
         return ToolResult(result.get("message", "OK"))
     return ToolError(result.get("error", "NX bridge command failed"))
 
+
+@mcp_tool("create_cube", "Create a cube with side length mm from origin x y z")
+def create_cube(size: float = 10.0, x: float = 0.0, y: float = 0.0, z: float = 0.0):
+    try:
+        if size <= 0:
+            return ToolError("Cube size must be positive")
+        if not _use_mock_nxopen():
+            return _bridge_result(
+                runner.call_nx(
+                    "create_cube",
+                    {"size": size, "x": x, "y": y, "z": z},
+                )
+            )
+        b = NXSession.work_part().Features.CreateExtrudeBuilder(None)
+        b.Limits.StartExtend.Value.RightHandSide = str(z)
+        b.Limits.EndExtend.Value.RightHandSide = str(z + size)
+        b.CommitFeature(); b.Destroy()
+        return ToolResult(f"Cube {size}mm at ({x},{y},{z})")
+    except Exception as e: return ToolError(str(e))
+
+
 @mcp_tool("extrude", "Extrude active sketch by distance mm")
 def extrude(distance: float, start: float = 0.0):
     try:

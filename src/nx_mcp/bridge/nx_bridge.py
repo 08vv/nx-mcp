@@ -168,6 +168,30 @@ def extrude(distance, start=0):
     return {"ok": True, "message": f"Extruded {float(distance)}mm"}
 
 
+def create_cube(size=10.0, x=0.0, y=0.0, z=0.0):
+    size = float(size)
+    x = float(x)
+    y = float(y)
+    z = float(z)
+
+    if size <= 0.0:
+        return {"ok": False, "error": "Cube size must be positive"}
+
+    sketch_result = create_sketch("XY")
+    if not sketch_result.get("ok"):
+        return sketch_result
+
+    rectangle_result = draw_rectangle(x, y, size, size)
+    if not rectangle_result.get("ok"):
+        return rectangle_result
+
+    extrude_result = extrude(size, z)
+    if not extrude_result.get("ok"):
+        return extrude_result
+
+    return {"ok": True, "message": f"Cube {size}mm at ({x},{y},{z})"}
+
+
 def dispatch(command):
     tool = command.get("tool")
     args = command.get("args", {})
@@ -184,6 +208,13 @@ def dispatch(command):
         return draw_rectangle(args["x"], args["y"], args["width"], args["height"])
     if tool == "draw_cylinder_profile":
         return draw_cylinder_profile(args["outer_radius"], args["inner_radius"])
+    if tool == "create_cube":
+        return create_cube(
+            args.get("size", 10.0),
+            args.get("x", 0.0),
+            args.get("y", 0.0),
+            args.get("z", 0.0),
+        )
     if tool == "extrude":
         return extrude(args["distance"], args.get("start", 0))
 

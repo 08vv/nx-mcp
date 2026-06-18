@@ -45,6 +45,14 @@ def test_extrude():
     r = modeling.extrude(20.0)
     assert isinstance(r, ToolResult) and "20" in r.message
 
+def test_create_cube():
+    r = modeling.create_cube(25.0)
+    assert isinstance(r, ToolResult) and "25.0" in r.message
+
+def test_create_cube_rejects_non_positive_size():
+    r = modeling.create_cube(0.0)
+    assert isinstance(r, ToolError) and "positive" in r.error
+
 def test_revolve():
     assert isinstance(modeling.revolve("Z", 360.0), ToolResult)
 
