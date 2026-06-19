@@ -1,0 +1,73 @@
+Right now this project can generate **basic NX geometry through code**, mostly simple sketch/profile-based shapes and block features.
+
+**Currently Working**
+- `create_cube`
+  Example: “generate a 25 mm cube”
+- `create_cuboid`
+  Example: “generate a cuboid 40 x 25 x 20 mm”
+- `create_two_cuboids`
+  Example: “generate two cuboids next to each other”
+- `draw_rectangle`
+  Example: “draw a 100 x 50 rectangle”
+- `draw_circle`
+  Example: “draw a circle radius 25”
+- `extrude`
+  Example: “extrude the active sketch by 20 mm”
+- `create_part`
+  Example: “create a new NX part”
+- `open_part`
+  Example: “open this `.prt` file”
+- `save_part`
+  Example: “save the current NX part”
+- `fit_view`
+  Example: “fit the model in NX view”
+
+**Partly Available / Mock-Level**
+These tools exist, but many are still placeholder-level or need stronger real NX implementation:
+
+- `revolve`
+  Example: “revolve sketch around Z axis”
+- `boolean_unite`
+  Example: “combine two bodies”
+- `boolean_subtract`
+  Example: “subtract one body from another”
+- `add_fillet`
+  Example: “add 3 mm fillet”
+- `add_chamfer`
+  Example: “add 2 mm chamfer”
+- `add_hole`
+  Example: “add 8 mm hole”
+- `mirror_feature`
+  Example: “mirror feature across XZ plane”
+- `pattern_feature`
+  Example: “pattern this hole 4 times”
+
+**Good Objects To Generate Next**
+These are realistic next targets for this MCP server:
+
+- blocks, cuboids, plates
+  Example: “make a 100 x 60 x 10 base plate”
+- cylinders
+  Example: “make a cylinder radius 20 height 50”
+- tubes / hollow cylinders
+  Example: “make a pipe outer radius 25 inner radius 15 height 80”
+- simple brackets
+  Example: “make an L bracket with two mounting holes”
+- stepped blocks
+  Example: “make a two-level block”
+- bolt-like shapes
+  Example: “make a cylinder with hex head”
+- flanges
+  Example: “make circular flange with 6 holes”
+- simple enclosures
+  Example: “make an open box with wall thickness 3 mm”
+
+**Current Limitations**
+- Complex organic/freeform shapes are not ready yet.
+- Advanced assemblies are not reliable yet.
+- Automatic face/edge selection is still weak, so fillets, chamfers, holes, and booleans need more work.
+- NX sometimes needs permission to run outside the sandbox.
+- If multiple NX sessions are open, results can appear confusing, so one live NX session is best.
+- Native `.prt` files must be created by NX itself; they cannot be hand-written like STL.
+
+Best sweet spot right now: **simple mechanical CAD shapes made from blocks, circles, rectangles, extrudes, and soon cylinders/holes.**

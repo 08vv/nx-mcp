@@ -53,6 +53,14 @@ def test_create_cube_rejects_non_positive_size():
     r = modeling.create_cube(0.0)
     assert isinstance(r, ToolError) and "positive" in r.error
 
+def test_create_cuboid():
+    r = modeling.create_cuboid(40.0, 25.0, 20.0)
+    assert isinstance(r, ToolResult) and "40.0x25.0x20.0" in r.message
+
+def test_create_two_cuboids():
+    r = modeling.create_two_cuboids()
+    assert isinstance(r, ToolResult) and "two cuboids" in r.message
+
 def test_revolve():
     assert isinstance(modeling.revolve("Z", 360.0), ToolResult)
 
@@ -113,6 +121,9 @@ def test_set_view_valid():
 def test_set_view_invalid():
     r = utility.set_view("DIAGONAL")
     assert isinstance(r, ToolError) and "DIAGONAL" in r.error
+
+def test_reset_nx_bridge():
+    assert isinstance(utility.reset_nx_bridge(), ToolResult)
 
 def test_take_screenshot():
     assert isinstance(utility.take_screenshot("out.png"), ToolResult)

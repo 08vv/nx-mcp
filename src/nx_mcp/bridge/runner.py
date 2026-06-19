@@ -18,6 +18,23 @@ class NXBridgeProcess:
     _lock = threading.Lock()
 
     @classmethod
+    def reset(cls):
+        with cls._lock:
+            proc = cls._proc
+            cls._proc = None
+            if proc is None or proc.poll() is not None:
+                return
+            try:
+                proc.stdin.close()
+            except Exception:
+                pass
+            try:
+                proc.terminate()
+                proc.wait(timeout=10)
+            except Exception:
+                proc.kill()
+
+    @classmethod
     def _start(cls):
         run_journal = os.environ.get("NX_RUN_JOURNAL", DEFAULT_RUN_JOURNAL)
         bridge_script = _bridge_script_path()
@@ -61,6 +78,10 @@ class NXBridgeProcess:
 
 def call_nx(tool, args):
     return NXBridgeProcess.call(tool, args)
+
+
+def reset_nx_bridge():
+    NXBridgeProcess.reset()
 
 
 def run_tool(tool, **args):

@@ -36,6 +36,55 @@ def create_cube(size: float = 10.0, x: float = 0.0, y: float = 0.0, z: float = 0
     except Exception as e: return ToolError(str(e))
 
 
+@mcp_tool("create_cuboid", "Create a cuboid with length width height mm from origin x y z")
+def create_cuboid(
+    length: float = 40.0,
+    width: float = 25.0,
+    height: float = 20.0,
+    x: float = 0.0,
+    y: float = 0.0,
+    z: float = 0.0,
+):
+    try:
+        if length <= 0 or width <= 0 or height <= 0:
+            return ToolError("Cuboid dimensions must be positive")
+        if not _use_mock_nxopen():
+            return _bridge_result(
+                runner.call_nx(
+                    "create_cuboid",
+                    {
+                        "length": length,
+                        "width": width,
+                        "height": height,
+                        "x": x,
+                        "y": y,
+                        "z": z,
+                    },
+                )
+            )
+        b = NXSession.work_part().Features.CreateExtrudeBuilder(None)
+        b.Limits.StartExtend.Value.RightHandSide = str(z)
+        b.Limits.EndExtend.Value.RightHandSide = str(z + height)
+        b.CommitFeature(); b.Destroy()
+        return ToolResult(f"Cuboid {length}x{width}x{height}mm at ({x},{y},{z})")
+    except Exception as e: return ToolError(str(e))
+
+
+@mcp_tool("create_two_cuboids", "Create two cuboids next to each other")
+def create_two_cuboids():
+    try:
+        if not _use_mock_nxopen():
+            return _bridge_result(runner.call_nx("create_two_cuboids", {}))
+        first = create_cuboid(40.0, 25.0, 20.0, 0.0, 0.0, 0.0)
+        if isinstance(first, ToolError):
+            return first
+        second = create_cuboid(30.0, 25.0, 20.0, 45.0, 0.0, 0.0)
+        if isinstance(second, ToolError):
+            return second
+        return ToolResult("Created two cuboids next to each other")
+    except Exception as e: return ToolError(str(e))
+
+
 @mcp_tool("extrude", "Extrude active sketch by distance mm")
 def extrude(distance: float, start: float = 0.0):
     try:

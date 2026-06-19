@@ -63,6 +63,13 @@ def draw_rectangle(x: float, y: float, width: float, height: float):
 @mcp_tool("draw_circle", "Draw circle at cx cy with radius")
 def draw_circle(cx: float, cy: float, radius: float):
     try:
+        if not _use_mock_nxopen():
+            return _bridge_result(
+                runner.call_nx(
+                    "draw_circle",
+                    {"cx": cx, "cy": cy, "radius": radius},
+                )
+            )
         nxopen = NXSession.nxopen()
         part = NXSession.work_part()
         part.Curves.CreateArc(nxopen.Point3d(cx, cy, 0.0), nxopen.Vector3d(0, 0, 1), radius, 0.0, 6.28318)
