@@ -1,4 +1,4 @@
-import json, sys, logging
+import json, os, sys, logging
 
 from nx_mcp.tools import file_ops, sketch, modeling, assembly, measure, utility  # noqa
 from nx_mcp.tools.registry import ToolRegistry
@@ -43,6 +43,17 @@ def handle(req):
 
 def main():
     log.info(f"NX MCP started — {len(ToolRegistry.all())} tools")
+    
+    if os.environ.get("NX_MCP_USE_MOCK_NXOPEN") != "1":
+        from nx_mcp.bridge.runner import verify_nx_environment
+        try:
+            verify_nx_environment()
+        except RuntimeError as e:
+            log.error(f"NX environment check failed: {e}")
+            sys.stderr.write(f"ERROR: NX environment check failed: {e}\n")
+            sys.stderr.flush()
+            sys.exit(1)
+
     for line in sys.stdin:
         line = line.strip()
         if not line: continue

@@ -1,20 +1,17 @@
 import math
 import sys
+import os
 from pathlib import Path
+import subprocess
 
 import NXOpen
 
-
 OUTER_DIAMETER = 120.0
-THICKNESS = 12.0
-CENTER_BORE_DIAMETER = 40.0
-BOLT_CIRCLE_DIAMETER = 90.0
+THICKNESS = 15.0
+CENTER_BORE_DIAMETER = 50.0
+BOLT_CIRCLE_DIAMETER = 95.0
 BOLT_HOLE_DIAMETER = 10.0
 BOLT_HOLE_COUNT = 6
-ANGULAR_SEGMENTS = 384
-RADIAL_SEGMENTS = 96
-HOLE_SEGMENTS = 64
-TOLERANCE = 1.0e-6
 
 
 def _output_path():
@@ -23,166 +20,152 @@ def _output_path():
     return Path.cwd().joinpath("circular_flange_6_holes.prt").resolve()
 
 
-class ObjMesh:
-    def __init__(self):
-        self.vertices = []
-        self.faces = []
-
-    def vertex(self, x, y, z):
-        self.vertices.append((float(x), float(y), float(z)))
-        return len(self.vertices)
-
-    def face(self, *indices):
-        self.faces.append(tuple(indices))
-
-    def tri(self, a, b, c):
-        self.face(a, b, c)
-
-    def quad(self, a, b, c, d):
-        self.face(a, b, c)
-        self.face(a, c, d)
-
-    def write(self, path):
-        with path.open("w", encoding="ascii") as stream:
-            stream.write("# circular flange OD120 T12 bore40 6xD10 on PCD90\n")
-            for x, y, z in self.vertices:
-                stream.write(f"v {x:.6f} {y:.6f} {z:.6f}\n")
-            for face in self.faces:
-                stream.write("f " + " ".join(str(index) for index in face) + "\n")
-
-
-def _bolt_hole_centers():
-    radius = BOLT_CIRCLE_DIAMETER / 2.0
-    for index in range(BOLT_HOLE_COUNT):
-        angle = 2.0 * math.pi * index / BOLT_HOLE_COUNT
-        yield radius * math.cos(angle), radius * math.sin(angle)
-
-
-def _inside_bolt_hole(x, y):
-    hole_radius = BOLT_HOLE_DIAMETER / 2.0
-    for cx, cy in _bolt_hole_centers():
-        if math.hypot(x - cx, y - cy) < hole_radius - TOLERANCE:
-            return True
-    return False
-
-
-def _inside_material(x, y):
-    radius = math.hypot(x, y)
-    return (
-        CENTER_BORE_DIAMETER / 2.0 + TOLERANCE
-        < radius
-        < OUTER_DIAMETER / 2.0 - TOLERANCE
-        and not _inside_bolt_hole(x, y)
-    )
-
-
-def _polar_point(radius, angle):
-    return radius * math.cos(angle), radius * math.sin(angle)
-
-
-def _add_planar_mesh(mesh, z, reverse=False):
-    inner_radius = CENTER_BORE_DIAMETER / 2.0
-    outer_radius = OUTER_DIAMETER / 2.0
-    radial_step = (outer_radius - inner_radius) / RADIAL_SEGMENTS
-    angular_step = 2.0 * math.pi / ANGULAR_SEGMENTS
-
-    for radial_index in range(RADIAL_SEGMENTS):
-        r0 = inner_radius + radial_step * radial_index
-        r1 = r0 + radial_step
-        mid_radius = (r0 + r1) / 2.0
-        for angular_index in range(ANGULAR_SEGMENTS):
-            a0 = angular_step * angular_index
-            a1 = angular_step * (angular_index + 1)
-            mid_angle = (a0 + a1) / 2.0
-            mid_x, mid_y = _polar_point(mid_radius, mid_angle)
-            if not _inside_material(mid_x, mid_y):
-                continue
-
-            p00 = (*_polar_point(r0, a0), z)
-            p10 = (*_polar_point(r1, a0), z)
-            p11 = (*_polar_point(r1, a1), z)
-            p01 = (*_polar_point(r0, a1), z)
-            vertices = [mesh.vertex(*point) for point in (p00, p10, p11, p01)]
-            if reverse:
-                mesh.quad(vertices[3], vertices[2], vertices[1], vertices[0])
-            else:
-                mesh.quad(vertices[0], vertices[1], vertices[2], vertices[3])
-
-
-def _add_cylindrical_wall(mesh, radius, reverse=False):
-    top = []
-    bottom = []
-    for index in range(ANGULAR_SEGMENTS):
-        angle = 2.0 * math.pi * index / ANGULAR_SEGMENTS
-        x, y = _polar_point(radius, angle)
-        bottom.append(mesh.vertex(x, y, 0.0))
-        top.append(mesh.vertex(x, y, THICKNESS))
-
-    for index in range(ANGULAR_SEGMENTS):
-        next_index = (index + 1) % ANGULAR_SEGMENTS
-        if reverse:
-            mesh.quad(bottom[index], top[index], top[next_index], bottom[next_index])
-        else:
-            mesh.quad(bottom[next_index], top[next_index], top[index], bottom[index])
-
-
-def _add_hole_wall(mesh, cx, cy, radius):
-    top = []
-    bottom = []
-    for index in range(HOLE_SEGMENTS):
-        angle = 2.0 * math.pi * index / HOLE_SEGMENTS
-        x = cx + radius * math.cos(angle)
-        y = cy + radius * math.sin(angle)
-        bottom.append(mesh.vertex(x, y, 0.0))
-        top.append(mesh.vertex(x, y, THICKNESS))
-
-    for index in range(HOLE_SEGMENTS):
-        next_index = (index + 1) % HOLE_SEGMENTS
-        mesh.quad(bottom[index], top[index], top[next_index], bottom[next_index])
-
-
-def _write_flange_obj(path):
-    mesh = ObjMesh()
-    _add_planar_mesh(mesh, THICKNESS)
-    _add_planar_mesh(mesh, 0.0, reverse=True)
-    _add_cylindrical_wall(mesh, OUTER_DIAMETER / 2.0)
-    _add_cylindrical_wall(mesh, CENTER_BORE_DIAMETER / 2.0, reverse=True)
-
-    for cx, cy in _bolt_hole_centers():
-        _add_hole_wall(mesh, cx, cy, BOLT_HOLE_DIAMETER / 2.0)
-
-    mesh.write(path)
-
-
-def _import_obj(obj_path):
-    importer = NXOpen.Session.GetSession().DexManager.CreateWavefrontObjImporter()
+def perform_subtract(work_part, target_body, tool_body):
+    builder = work_part.Features.CreateBooleanBuilder(NXOpen.Features.BooleanFeature.Null)
     try:
-        importer.InputFile = str(obj_path)
-        importer.ImportTo = NXOpen.WavefrontObjImporter.ImportToOption.WorkPart
-        importer.ImportAs = NXOpen.WavefrontObjImporter.ImportAsOption.ConvergentGeometry
-        importer.ImportUnits = NXOpen.WavefrontObjImporter.UnitsEnum.Millimeters
-        importer.Commit()
+        builder.Operation = NXOpen.Features.Feature.BooleanType.Subtract
+        for attr in ("Target", "TargetBody"):
+            if hasattr(builder, attr):
+                try:
+                    setattr(builder, attr, target_body)
+                    break
+                except Exception:
+                    pass
+        for attr in ("Tool", "ToolBody"):
+            if hasattr(builder, attr):
+                try:
+                    setattr(builder, attr, tool_body)
+                    break
+                except Exception:
+                    pass
+        builder.CommitFeature()
     finally:
-        importer.Destroy()
+        builder.Destroy()
 
 
 def main():
     output_path = _output_path()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    obj_path = output_path.with_suffix(".obj")
-    _write_flange_obj(obj_path)
 
     session = NXOpen.Session.GetSession()
     session.Parts.NewDisplay(str(output_path), NXOpen.Part.Units.Millimeters)
     work_part = session.Parts.Work
-    _import_obj(obj_path)
+
+    # Create Named Expressions
+    expressions = [
+        ("OUTER_DIAMETER", OUTER_DIAMETER),
+        ("THICKNESS", THICKNESS),
+        ("CENTER_BORE_DIAMETER", CENTER_BORE_DIAMETER),
+        ("BOLT_CIRCLE_DIAMETER", BOLT_CIRCLE_DIAMETER),
+        ("BOLT_HOLE_DIAMETER", BOLT_HOLE_DIAMETER),
+        ("BOLT_HOLE_COUNT", BOLT_HOLE_COUNT),
+    ]
+    for name, value in expressions:
+        work_part.Expressions.CreateExpression("Number", f"{name} = {value}")
+
+    # 1. Main outer cylinder
+    cylinder_builder = work_part.Features.CreateCylinderBuilder(NXOpen.Features.Feature.Null)
+    try:
+        origin = NXOpen.Point3d(0.0, 0.0, 0.0)
+        dir_vector = NXOpen.Vector3d(0.0, 0.0, 1.0)
+        direction = work_part.Directions.CreateDirection(origin, dir_vector, NXOpen.SmartObject.UpdateOption.WithinModeling)
+
+        cylinder_builder.Diameter.RightHandSide = "OUTER_DIAMETER"
+        cylinder_builder.Height.RightHandSide = "THICKNESS"
+        cylinder_builder.Axis.Point.SetCoordinates(origin)
+        cylinder_builder.Axis.Direction = direction
+
+        main_feat = cylinder_builder.Commit()
+    finally:
+        cylinder_builder.Destroy()
+
+    main_body = main_feat.GetBodies()[0]
+
+    # 2. Center bore cylinder
+    bore_builder = work_part.Features.CreateCylinderBuilder(NXOpen.Features.Feature.Null)
+    try:
+        origin = NXOpen.Point3d(0.0, 0.0, 0.0)
+        dir_vector = NXOpen.Vector3d(0.0, 0.0, 1.0)
+        direction = work_part.Directions.CreateDirection(origin, dir_vector, NXOpen.SmartObject.UpdateOption.WithinModeling)
+
+        bore_builder.Diameter.RightHandSide = "CENTER_BORE_DIAMETER"
+        bore_builder.Height.RightHandSide = "THICKNESS"
+        bore_builder.Axis.Point.SetCoordinates(origin)
+        bore_builder.Axis.Direction = direction
+
+        bore_feat = bore_builder.Commit()
+    finally:
+        bore_builder.Destroy()
+
+    bore_body = bore_feat.GetBodies()[0]
+    perform_subtract(work_part, main_body, bore_body)
+
+    # 3. Create Bolt Holes at associative points
+    csys = work_part.WCS.CoordinateSystem
+    for i in range(int(BOLT_HOLE_COUNT)):
+        # Create coordinates expressions
+        expr_x = work_part.Expressions.CreateExpression("Number", f"HOLE_X_{i} = (BOLT_CIRCLE_DIAMETER / 2.0) * cos({i} * 360.0 / BOLT_HOLE_COUNT)")
+        expr_y = work_part.Expressions.CreateExpression("Number", f"HOLE_Y_{i} = (BOLT_CIRCLE_DIAMETER / 2.0) * sin({i} * 360.0 / BOLT_HOLE_COUNT)")
+        expr_z = work_part.Expressions.CreateExpression("Number", f"HOLE_Z_{i} = 0.0")
+
+        # Create associative scalars and point
+        x_scalar = work_part.Scalars.CreateScalarExpression(expr_x, NXOpen.Scalar.DimensionalityType.NotSet, NXOpen.SmartObject.UpdateOption.WithinModeling)
+        y_scalar = work_part.Scalars.CreateScalarExpression(expr_y, NXOpen.Scalar.DimensionalityType.NotSet, NXOpen.SmartObject.UpdateOption.WithinModeling)
+        z_scalar = work_part.Scalars.CreateScalarExpression(expr_z, NXOpen.Scalar.DimensionalityType.NotSet, NXOpen.SmartObject.UpdateOption.WithinModeling)
+        
+        assoc_point = work_part.Points.CreatePoint(csys, x_scalar, y_scalar, z_scalar, NXOpen.SmartObject.UpdateOption.WithinModeling)
+
+        hole_builder = work_part.Features.CreateCylinderBuilder(NXOpen.Features.Feature.Null)
+        try:
+            hole_builder.Diameter.RightHandSide = "BOLT_HOLE_DIAMETER"
+            hole_builder.Height.RightHandSide = "THICKNESS"
+            
+            # Set the associative point
+            hole_builder.Axis.Point = assoc_point
+
+            # Create associative direction based on the point
+            dir_vector = NXOpen.Vector3d(0.0, 0.0, 1.0)
+            direction = work_part.Directions.CreateDirection(assoc_point, dir_vector)
+            hole_builder.Axis.Direction = direction
+
+            hole_feat = hole_builder.Commit()
+        finally:
+            hole_builder.Destroy()
+
+        hole_body = hole_feat.GetBodies()[0]
+        perform_subtract(work_part, main_body, hole_body)
 
     work_part.ModelingViews.WorkView.Fit()
     work_part.Save(
         NXOpen.BasePart.SaveComponents.TrueValue,
         NXOpen.BasePart.CloseAfterSave.FalseValue,
     )
-    print(f"Created circular flange with 6 evenly spaced holes: {output_path}")
+    print(f"Created circular flange: {output_path}")
+
+    # Write to latest_nx_result.txt
+    try:
+        latest_file = Path(output_path).parent / "latest_nx_result.txt"
+        latest_file.write_text(str(output_path.resolve()), encoding="utf-8")
+        print(f"Updated latest_nx_result.txt with: {output_path}")
+    except Exception as e:
+        print(f"Failed to write to latest_nx_result.txt: {e}")
+
+    # Auto-open the part in Siemens NX GUI
+    try:
+        base_dir = os.environ.get("UGII_BASE_DIR") or r"C:\Program Files\Siemens\NX2206"
+        base_path = Path(base_dir)
+        ugs_router_candidates = [
+            base_path / "NXBIN" / "ugs_router.exe",
+            base_path / "UGII" / "ugs_router.exe",
+        ]
+        ugs_router_path = next((c for c in ugs_router_candidates if c.exists()), None)
+        if ugs_router_path:
+            subprocess.Popen([str(ugs_router_path), "-ug", "-use_file_dir", str(output_path.resolve())])
+            print(f"Launched NX GUI to open: {output_path}")
+        else:
+            print("Could not find ugs_router.exe to open the part.")
+    except Exception as e:
+        print(f"Failed to auto-open in NX GUI: {e}")
 
 
 if __name__ == "__main__":

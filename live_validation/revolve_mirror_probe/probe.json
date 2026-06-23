@@ -1,0 +1,70 @@
+{
+  "mirror_plane_setvalue": [
+    {
+      "label": "Plane.SetValue(plane)",
+      "ok": false,
+      "error": "No overload matches these arguments. The arguments passed are... \n(NXOpen.Plane).",
+      "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\probe_revolve_mirror.py\", line 31, in _try\n    value = fn()\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\probe_revolve_mirror.py\", line 89, in <lambda>\n    result = _try(label, lambda builder=builder, setter=setter: setter(builder))\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\probe_revolve_mirror.py\", line 79, in <lambda>\n    (\"Plane.SetValue(plane)\", lambda b: b.Plane.SetValue(plane)),\nTypeError: No overload matches these arguments. The arguments passed are... \n(NXOpen.Plane).\n"
+    },
+    {
+      "label": "Plane.SetValue(plane, origin)",
+      "ok": false,
+      "error": "No overload matches these arguments. The arguments passed are... \n(NXOpen.Plane, NXOpen.Point3d).",
+      "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\probe_revolve_mirror.py\", line 31, in _try\n    value = fn()\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\probe_revolve_mirror.py\", line 89, in <lambda>\n    result = _try(label, lambda builder=builder, setter=setter: setter(builder))\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\probe_revolve_mirror.py\", line 80, in <lambda>\n    (\"Plane.SetValue(plane, origin)\", lambda b: b.Plane.SetValue(plane, origin)),\nTypeError: No overload matches these arguments. The arguments passed are... \n(NXOpen.Plane, NXOpen.Point3d).\n"
+    },
+    {
+      "label": "Plane.Value = plane",
+      "ok": true,
+      "value": "None",
+      "commit": {
+        "label": "Plane.Value = plane CommitFeature",
+        "ok": false,
+        "error": "No plane to Mirror about.",
+        "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\probe_revolve_mirror.py\", line 31, in _try\n    value = fn()\nNXOpen.NXException: No plane to Mirror about.\n"
+      }
+    },
+    {
+      "label": "PlaneConstructor = plane",
+      "ok": true,
+      "value": "None",
+      "commit": {
+        "label": "PlaneConstructor = plane CommitFeature",
+        "ok": false,
+        "error": "No plane to Mirror about.",
+        "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\probe_revolve_mirror.py\", line 31, in _try\n    value = fn()\nNXOpen.NXException: No plane to Mirror about.\n"
+      }
+    },
+    {
+      "label": "Plane.SetValue(None, plane, origin)",
+      "ok": false,
+      "error": "No overload matches these arguments. The arguments passed are... \n(NoneType, NXOpen.Plane, NXOpen.Point3d).",
+      "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\probe_revolve_mirror.py\", line 31, in _try\n    value = fn()\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\probe_revolve_mirror.py\", line 89, in <lambda>\n    result = _try(label, lambda builder=builder, setter=setter: setter(builder))\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\probe_revolve_mirror.py\", line 83, in <lambda>\n    (\"Plane.SetValue(None, plane, origin)\", lambda b: b.Plane.SetValue(None, plane, origin)),\nTypeError: No overload matches these arguments. The arguments passed are... \n(NoneType, NXOpen.Plane, NXOpen.Point3d).\n"
+    }
+  ],
+  "revolve_variants": [
+    {
+      "label": "axis Y, 360",
+      "ok": false,
+      "error": "Internal error: memory access violation",
+      "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\probe_revolve_mirror.py\", line 31, in _try\n    value = fn()\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\probe_revolve_mirror.py\", line 113, in <lambda>\n    result = _try(label, lambda axis=axis, angle=angle: nx_bridge.revolve(axis, angle))\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\bridge\\nx_bridge.py\", line 890, in revolve\n    feature = builder.CommitFeature()\nNXOpen.NXException: Internal error: memory access violation\n",
+      "last_feature": "",
+      "body_count": 0
+    },
+    {
+      "label": "axis Z, 360",
+      "ok": false,
+      "error": "Internal error: memory access violation",
+      "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\probe_revolve_mirror.py\", line 31, in _try\n    value = fn()\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\probe_revolve_mirror.py\", line 113, in <lambda>\n    result = _try(label, lambda axis=axis, angle=angle: nx_bridge.revolve(axis, angle))\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\bridge\\nx_bridge.py\", line 890, in revolve\n    feature = builder.CommitFeature()\nNXOpen.NXException: Internal error: memory access violation\n",
+      "last_feature": "",
+      "body_count": 0
+    },
+    {
+      "label": "axis Y, 180",
+      "ok": false,
+      "error": "Internal error: memory access violation",
+      "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\probe_revolve_mirror.py\", line 31, in _try\n    value = fn()\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\probe_revolve_mirror.py\", line 113, in <lambda>\n    result = _try(label, lambda axis=axis, angle=angle: nx_bridge.revolve(axis, angle))\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\bridge\\nx_bridge.py\", line 890, in revolve\n    feature = builder.CommitFeature()\nNXOpen.NXException: Internal error: memory access violation\n",
+      "last_feature": "",
+      "body_count": 0
+    }
+  ]
+}

@@ -1,0 +1,353 @@
+[
+  {
+    "name": "create_cylinder",
+    "part": "C:\\Users\\HP\\nx-mcp\\live_validation\\current3\\validate_create_cylinder.prt",
+    "commands": [
+      {
+        "tool": "create_cylinder",
+        "args": {
+          "radius": 10,
+          "height": 35,
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "direction": "Z"
+        },
+        "result": {
+          "ok": true,
+          "message": "Cylinder R10.0 height 35.0 at (0.0,0.0,0.0)"
+        }
+      }
+    ],
+    "ok": true,
+    "before": {
+      "feature_count": 0,
+      "body_count": 0,
+      "last_feature": null,
+      "last_body": null
+    },
+    "after": {
+      "feature_count": 0,
+      "body_count": 1,
+      "last_feature": "Cylinder(0)",
+      "last_body": "CYLINDER(0)"
+    }
+  },
+  {
+    "name": "add_hole",
+    "part": "C:\\Users\\HP\\nx-mcp\\live_validation\\current3\\validate_add_hole.prt",
+    "commands": [
+      {
+        "tool": "create_cuboid",
+        "args": {
+          "length": 60,
+          "width": 40,
+          "height": 12,
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "result": {
+          "ok": true,
+          "message": "Cuboid 60.0x40.0x12.0mm at (0.0,0.0,0.0)"
+        }
+      },
+      {
+        "tool": "add_hole",
+        "args": {
+          "x": 30,
+          "y": 20,
+          "z": 12,
+          "diameter": 8,
+          "depth": 16,
+          "target": "last",
+          "direction": "-Z"
+        },
+        "result": {
+          "ok": true,
+          "message": "Hole D=8.0 depth=16.0 at (30.0,20.0,12.0) created by subtracting a cylindrical tool body"
+        }
+      }
+    ],
+    "ok": true,
+    "before": {
+      "feature_count": 0,
+      "body_count": 0,
+      "last_feature": null,
+      "last_body": null
+    },
+    "after": {
+      "feature_count": 0,
+      "body_count": 1,
+      "last_feature": "Subtract(2)",
+      "last_body": "BLOCK(0)"
+    }
+  },
+  {
+    "name": "boolean_unite",
+    "part": "C:\\Users\\HP\\nx-mcp\\live_validation\\current3\\validate_boolean_unite.prt",
+    "commands": [
+      {
+        "tool": "create_cuboid",
+        "result": {
+          "ok": true,
+          "message": "Cuboid 30.0x20.0x12.0mm at (0.0,0.0,0.0)"
+        }
+      },
+      {
+        "tool": "create_cuboid",
+        "result": {
+          "ok": true,
+          "message": "Cuboid 20.0x20.0x12.0mm at (25.0,0.0,0.0)"
+        }
+      },
+      {
+        "tool": "boolean_unite",
+        "args": {
+          "target": "BLOCK(0)",
+          "tool": "BLOCK(1)"
+        },
+        "result": {
+          "ok": true,
+          "message": "Boolean unite: BLOCK(0) with BLOCK(1)"
+        }
+      }
+    ],
+    "ok": true,
+    "error": null,
+    "before": {
+      "feature_count": 0,
+      "body_count": 0,
+      "last_feature": null,
+      "last_body": null
+    },
+    "after": {
+      "feature_count": 0,
+      "body_count": 1,
+      "last_feature": "Unite(2)",
+      "last_body": "BLOCK(0)"
+    }
+  },
+  {
+    "name": "boolean_subtract",
+    "part": "C:\\Users\\HP\\nx-mcp\\live_validation\\current3\\validate_boolean_subtract.prt",
+    "commands": [
+      {
+        "tool": "create_cuboid",
+        "result": {
+          "ok": true,
+          "message": "Cuboid 50.0x35.0x15.0mm at (0.0,0.0,0.0)"
+        }
+      },
+      {
+        "tool": "create_cylinder",
+        "result": {
+          "ok": true,
+          "message": "Cylinder R5.0 height 25.0 at (25.0,17.5,20.0)"
+        }
+      },
+      {
+        "tool": "boolean_subtract",
+        "args": {
+          "target": "BLOCK(0)",
+          "tool": "CYLINDER(1)"
+        },
+        "result": {
+          "ok": true,
+          "message": "Boolean subtract: BLOCK(0) with CYLINDER(1)"
+        }
+      }
+    ],
+    "ok": true,
+    "error": null,
+    "before": {
+      "feature_count": 0,
+      "body_count": 0,
+      "last_feature": null,
+      "last_body": null
+    },
+    "after": {
+      "feature_count": 0,
+      "body_count": 1,
+      "last_feature": "Subtract(2)",
+      "last_body": "BLOCK(0)"
+    }
+  },
+  {
+    "name": "add_fillet",
+    "part": "C:\\Users\\HP\\nx-mcp\\live_validation\\current3\\validate_add_fillet.prt",
+    "commands": [
+      {
+        "tool": "create_cuboid",
+        "args": {
+          "length": 40,
+          "width": 30,
+          "height": 16,
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "result": {
+          "ok": true,
+          "message": "Cuboid 40.0x30.0x16.0mm at (0.0,0.0,0.0)"
+        }
+      },
+      {
+        "tool": "add_fillet",
+        "args": {
+          "radius": 2,
+          "body": "last",
+          "edges": "vertical_edges"
+        },
+        "result": {
+          "ok": true,
+          "message": "Fillet R2.0 on 4 edges"
+        }
+      }
+    ],
+    "ok": true,
+    "before": {
+      "feature_count": 0,
+      "body_count": 0,
+      "last_feature": null,
+      "last_body": null
+    },
+    "after": {
+      "feature_count": 0,
+      "body_count": 1,
+      "last_feature": "Edge Blend(1)",
+      "last_body": "BLOCK(0)"
+    }
+  },
+  {
+    "name": "add_chamfer",
+    "part": "C:\\Users\\HP\\nx-mcp\\live_validation\\current3\\validate_add_chamfer.prt",
+    "commands": [
+      {
+        "tool": "create_cuboid",
+        "args": {
+          "length": 40,
+          "width": 30,
+          "height": 16,
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "result": {
+          "ok": true,
+          "message": "Cuboid 40.0x30.0x16.0mm at (0.0,0.0,0.0)"
+        }
+      },
+      {
+        "tool": "add_chamfer",
+        "args": {
+          "offset": 2,
+          "body": "last",
+          "edges": "top_edges"
+        },
+        "result": {
+          "ok": true,
+          "message": "Chamfer 2.0mm on 4 edges"
+        }
+      }
+    ],
+    "ok": true,
+    "before": {
+      "feature_count": 0,
+      "body_count": 0,
+      "last_feature": null,
+      "last_body": null
+    },
+    "after": {
+      "feature_count": 0,
+      "body_count": 1,
+      "last_feature": "Chamfer(1)",
+      "last_body": "BLOCK(0)"
+    }
+  },
+  {
+    "name": "revolve",
+    "part": "C:\\Users\\HP\\nx-mcp\\live_validation\\current3\\validate_revolve.prt",
+    "commands": [
+      {
+        "tool": "create_sketch",
+        "args": {
+          "plane": "XY"
+        },
+        "result": {
+          "ok": true,
+          "message": "Sketch created on XY plane"
+        }
+      },
+      {
+        "tool": "draw_rectangle",
+        "args": {
+          "x": 6,
+          "y": -20,
+          "width": 4,
+          "height": 40
+        },
+        "result": {
+          "ok": true,
+          "message": "Rectangle 6.0,-20.0 size 4.0x40.0"
+        }
+      }
+    ],
+    "ok": false,
+    "error": "Internal error: memory access violation",
+    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\validate_feature_operations.py\", line 97, in _record\n    result = _dispatch(tool, args)\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\validate_feature_operations.py\", line 87, in _dispatch\n    return nx_bridge.dispatch({\"tool\": tool, \"args\": args or {}})\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\bridge\\nx_bridge.py\", line 1042, in dispatch\n    return revolve(args.get(\"axis\", \"Z\"), args.get(\"angle_deg\", 360.0))\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\bridge\\nx_bridge.py\", line 890, in revolve\n    feature = builder.CommitFeature()\nNXOpen.NXException: Internal error: memory access violation\n"
+  },
+  {
+    "name": "mirror_feature",
+    "part": "C:\\Users\\HP\\nx-mcp\\live_validation\\current3\\validate_mirror_feature.prt",
+    "commands": [
+      {
+        "tool": "create_cuboid",
+        "result": {
+          "ok": true,
+          "message": "Cuboid 12.0x12.0x12.0mm at (20.0,0.0,0.0)"
+        }
+      }
+    ],
+    "ok": false,
+    "error": "No overload matches these arguments. The arguments passed are... \n(NXOpen.Plane).",
+    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\validate_feature_operations.py\", line 207, in _record_mirror\n    result = _dispatch(\"mirror_feature\", {\"feature_name\": feature, \"plane\": \"YZ\"})\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\validate_feature_operations.py\", line 87, in _dispatch\n    return nx_bridge.dispatch({\"tool\": tool, \"args\": args or {}})\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\bridge\\nx_bridge.py\", line 1071, in dispatch\n    return mirror_feature(args.get(\"feature_name\", \"last\"), args.get(\"plane\", \"XZ\"))\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\bridge\\nx_bridge.py\", line 924, in mirror_feature\n    builder.Plane.SetValue(nx_plane)\nTypeError: No overload matches these arguments. The arguments passed are... \n(NXOpen.Plane).\n"
+  },
+  {
+    "name": "pattern_feature",
+    "part": "C:\\Users\\HP\\nx-mcp\\live_validation\\current3\\validate_pattern_feature.prt",
+    "commands": [
+      {
+        "tool": "create_cylinder",
+        "result": {
+          "ok": true,
+          "message": "Cylinder R3.0 height 10.0 at (0.0,0.0,0.0)"
+        }
+      },
+      {
+        "tool": "pattern_feature",
+        "args": {
+          "feature_name": "Cylinder(0)"
+        },
+        "result": {
+          "ok": true,
+          "message": "Pattern 'Cylinder(0)' 4x @ 15.0mm along X"
+        }
+      }
+    ],
+    "ok": true,
+    "error": null,
+    "before": {
+      "feature_count": 0,
+      "body_count": 0,
+      "last_feature": null,
+      "last_body": null
+    },
+    "after": {
+      "feature_count": 0,
+      "body_count": 4,
+      "last_feature": "Pattern Feature [Linear](1)",
+      "last_body": "CYLINDER(0)"
+    }
+  }
+]

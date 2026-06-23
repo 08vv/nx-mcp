@@ -1,0 +1,265 @@
+[
+  {
+    "name": "create_cylinder",
+    "part": "C:\\Users\\HP\\nx-mcp\\live_validation\\validate_create_cylinder.prt",
+    "commands": [
+      {
+        "tool": "create_cylinder",
+        "args": {
+          "radius": 10,
+          "height": 35,
+          "x": 0,
+          "y": 0,
+          "z": 0,
+          "direction": "Z"
+        },
+        "result": {
+          "ok": true,
+          "message": "Cylinder R10.0 height 35.0 at (0.0,0.0,0.0)"
+        }
+      }
+    ],
+    "ok": false,
+    "before": {
+      "feature_count": 0,
+      "body_count": 0,
+      "last_feature": null,
+      "last_body": null
+    },
+    "after": {
+      "feature_count": 0,
+      "body_count": 1,
+      "last_feature": "Cylinder(0)",
+      "last_body": "CYLINDER(0)"
+    },
+    "error": "No new feature was created"
+  },
+  {
+    "name": "add_hole",
+    "part": "C:\\Users\\HP\\nx-mcp\\live_validation\\validate_add_hole.prt",
+    "commands": [
+      {
+        "tool": "create_cuboid",
+        "args": {
+          "length": 60,
+          "width": 40,
+          "height": 12,
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "result": {
+          "ok": true,
+          "message": "Cuboid 60.0x40.0x12.0mm at (0.0,0.0,0.0)"
+        }
+      }
+    ],
+    "ok": false,
+    "error": "type object 'NXOpen.Features.BooleanBuilder' has no attribute 'BooleanType'",
+    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\validate_feature_operations.py\", line 97, in _record\n    result = _dispatch(tool, args)\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\validate_feature_operations.py\", line 87, in _dispatch\n    return nx_bridge.dispatch({\"tool\": tool, \"args\": args or {}})\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\bridge\\nx_bridge.py\", line 1014, in dispatch\n    return add_hole(\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\bridge\\nx_bridge.py\", line 798, in add_hole\n    return _subtract_cylinder_hole(target_body, x, y, z, diameter, depth, direction)\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\bridge\\nx_bridge.py\", line 779, in _subtract_cylinder_hole\n    result = boolean_subtract(_body_name(target_body), _body_name(tool_body))\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\bridge\\nx_bridge.py\", line 684, in boolean_subtract\n    return _boolean_operation(\"subtract\", target, tool)\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\bridge\\nx_bridge.py\", line 662, in _boolean_operation\n    builder.Operation = NXOpen.Features.BooleanBuilder.BooleanType.Subtract\nAttributeError: type object 'NXOpen.Features.BooleanBuilder' has no attribute 'BooleanType'\n"
+  },
+  {
+    "name": "boolean_unite",
+    "part": "C:\\Users\\HP\\nx-mcp\\live_validation\\validate_boolean_unite.prt",
+    "commands": [
+      {
+        "tool": "create_cuboid",
+        "result": {
+          "ok": true,
+          "message": "Cuboid 30.0x20.0x12.0mm at (0.0,0.0,0.0)"
+        }
+      },
+      {
+        "tool": "create_cuboid",
+        "result": {
+          "ok": true,
+          "message": "Cuboid 20.0x20.0x12.0mm at (25.0,0.0,0.0)"
+        }
+      }
+    ],
+    "ok": false,
+    "error": "type object 'NXOpen.Features.BooleanBuilder' has no attribute 'BooleanType'",
+    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\validate_feature_operations.py\", line 147, in _record_boolean_unite\n    result = _dispatch(\"boolean_unite\", {\"target\": target, \"tool\": tool})\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\validate_feature_operations.py\", line 87, in _dispatch\n    return nx_bridge.dispatch({\"tool\": tool, \"args\": args or {}})\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\bridge\\nx_bridge.py\", line 998, in dispatch\n    return boolean_unite(args.get(\"target\", \"last\"), args.get(\"tool\", \"last\"))\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\bridge\\nx_bridge.py\", line 680, in boolean_unite\n    return _boolean_operation(\"unite\", target, tool)\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\bridge\\nx_bridge.py\", line 660, in _boolean_operation\n    builder.Operation = NXOpen.Features.BooleanBuilder.BooleanType.Unite\nAttributeError: type object 'NXOpen.Features.BooleanBuilder' has no attribute 'BooleanType'\n"
+  },
+  {
+    "name": "boolean_subtract",
+    "part": "C:\\Users\\HP\\nx-mcp\\live_validation\\validate_boolean_subtract.prt",
+    "commands": [
+      {
+        "tool": "create_cuboid",
+        "result": {
+          "ok": true,
+          "message": "Cuboid 50.0x35.0x15.0mm at (0.0,0.0,0.0)"
+        }
+      },
+      {
+        "tool": "create_cylinder",
+        "result": {
+          "ok": true,
+          "message": "Cylinder R5.0 height 25.0 at (25.0,17.5,20.0)"
+        }
+      }
+    ],
+    "ok": false,
+    "error": "type object 'NXOpen.Features.BooleanBuilder' has no attribute 'BooleanType'",
+    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\validate_feature_operations.py\", line 178, in _record_boolean_subtract\n    result = _dispatch(\"boolean_subtract\", {\"target\": target, \"tool\": tool})\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\validate_feature_operations.py\", line 87, in _dispatch\n    return nx_bridge.dispatch({\"tool\": tool, \"args\": args or {}})\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\bridge\\nx_bridge.py\", line 1000, in dispatch\n    return boolean_subtract(args.get(\"target\", \"last\"), args.get(\"tool\", \"last\"))\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\bridge\\nx_bridge.py\", line 684, in boolean_subtract\n    return _boolean_operation(\"subtract\", target, tool)\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\bridge\\nx_bridge.py\", line 662, in _boolean_operation\n    builder.Operation = NXOpen.Features.BooleanBuilder.BooleanType.Subtract\nAttributeError: type object 'NXOpen.Features.BooleanBuilder' has no attribute 'BooleanType'\n"
+  },
+  {
+    "name": "add_fillet",
+    "part": "C:\\Users\\HP\\nx-mcp\\live_validation\\validate_add_fillet.prt",
+    "commands": [
+      {
+        "tool": "create_cuboid",
+        "args": {
+          "length": 40,
+          "width": 30,
+          "height": 16,
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "result": {
+          "ok": true,
+          "message": "Cuboid 40.0x30.0x16.0mm at (0.0,0.0,0.0)"
+        }
+      },
+      {
+        "tool": "add_fillet",
+        "args": {
+          "radius": 2,
+          "body": "last",
+          "edges": "vertical_edges"
+        },
+        "result": {
+          "ok": true,
+          "message": "Fillet R2.0 on 4 edges"
+        }
+      }
+    ],
+    "ok": false,
+    "before": {
+      "feature_count": 0,
+      "body_count": 0,
+      "last_feature": null,
+      "last_body": null
+    },
+    "after": {
+      "feature_count": 0,
+      "body_count": 1,
+      "last_feature": "Edge Blend(1)",
+      "last_body": "BLOCK(0)"
+    },
+    "error": "No new feature was created"
+  },
+  {
+    "name": "add_chamfer",
+    "part": "C:\\Users\\HP\\nx-mcp\\live_validation\\validate_add_chamfer.prt",
+    "commands": [
+      {
+        "tool": "create_cuboid",
+        "args": {
+          "length": 40,
+          "width": 30,
+          "height": 16,
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "result": {
+          "ok": true,
+          "message": "Cuboid 40.0x30.0x16.0mm at (0.0,0.0,0.0)"
+        }
+      },
+      {
+        "tool": "add_chamfer",
+        "args": {
+          "offset": 2,
+          "body": "last",
+          "edges": "top_edges"
+        },
+        "result": {
+          "ok": true,
+          "message": "Chamfer 2.0mm on 4 edges"
+        }
+      }
+    ],
+    "ok": false,
+    "before": {
+      "feature_count": 0,
+      "body_count": 0,
+      "last_feature": null,
+      "last_body": null
+    },
+    "after": {
+      "feature_count": 0,
+      "body_count": 1,
+      "last_feature": "Chamfer(1)",
+      "last_body": "BLOCK(0)"
+    },
+    "error": "No new feature was created"
+  },
+  {
+    "name": "revolve",
+    "part": "C:\\Users\\HP\\nx-mcp\\live_validation\\validate_revolve.prt",
+    "commands": [
+      {
+        "tool": "create_sketch",
+        "args": {
+          "plane": "XY"
+        },
+        "result": {
+          "ok": true,
+          "message": "Sketch created on XY plane"
+        }
+      },
+      {
+        "tool": "draw_rectangle",
+        "args": {
+          "x": 6,
+          "y": -20,
+          "width": 4,
+          "height": 40
+        },
+        "result": {
+          "ok": true,
+          "message": "Rectangle 6.0,-20.0 size 4.0x40.0"
+        }
+      }
+    ],
+    "ok": false,
+    "error": "'NoneType' object has no attribute 'Point'",
+    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\validate_feature_operations.py\", line 97, in _record\n    result = _dispatch(tool, args)\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\validate_feature_operations.py\", line 87, in _dispatch\n    return nx_bridge.dispatch({\"tool\": tool, \"args\": args or {}})\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\bridge\\nx_bridge.py\", line 996, in dispatch\n    return revolve(args.get(\"axis\", \"Z\"), args.get(\"angle_deg\", 360.0))\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\bridge\\nx_bridge.py\", line 860, in revolve\n    builder.Axis.Point.SetCoordinates(origin)\nAttributeError: 'NoneType' object has no attribute 'Point'\n"
+  },
+  {
+    "name": "mirror_feature",
+    "part": "C:\\Users\\HP\\nx-mcp\\live_validation\\validate_mirror_feature.prt",
+    "commands": [
+      {
+        "tool": "create_cuboid",
+        "result": {
+          "ok": true,
+          "message": "Cuboid 12.0x12.0x12.0mm at (20.0,0.0,0.0)"
+        }
+      }
+    ],
+    "ok": false,
+    "error": "Mirror builder has no supported feature selection property",
+    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\validate_feature_operations.py\", line 203, in _record_mirror\n    result = _dispatch(\"mirror_feature\", {\"feature_name\": feature, \"plane\": \"YZ\"})\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\validate_feature_operations.py\", line 87, in _dispatch\n    return nx_bridge.dispatch({\"tool\": tool, \"args\": args or {}})\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\bridge\\nx_bridge.py\", line 1025, in dispatch\n    return mirror_feature(args.get(\"feature_name\", \"last\"), args.get(\"plane\", \"XZ\"))\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\bridge\\nx_bridge.py\", line 886, in mirror_feature\n    raise SelectionError(\"Mirror builder has no supported feature selection property\")\nnx_mcp.bridge.nx_bridge.SelectionError: Mirror builder has no supported feature selection property\n"
+  },
+  {
+    "name": "pattern_feature",
+    "part": "C:\\Users\\HP\\nx-mcp\\live_validation\\validate_pattern_feature.prt",
+    "commands": [
+      {
+        "tool": "create_cylinder",
+        "result": {
+          "ok": true,
+          "message": "Cylinder R3.0 height 10.0 at (0.0,0.0,0.0)"
+        }
+      }
+    ],
+    "ok": false,
+    "error": "'NXOpen.Features.FeatureCollection' object has no attribute 'CreateLinearPatternBuilder'",
+    "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\validate_feature_operations.py\", line 228, in _record_pattern\n    result = _dispatch(\"pattern_feature\", {\"feature_name\": feature, \"direction\": \"X\", \"count\": 4, \"pitch\": 15})\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\journals\\validate_feature_operations.py\", line 87, in _dispatch\n    return nx_bridge.dispatch({\"tool\": tool, \"args\": args or {}})\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\bridge\\nx_bridge.py\", line 1027, in dispatch\n    return pattern_feature(\n  File \"C:\\Users\\HP\\nx-mcp\\src\\nx_mcp\\bridge\\nx_bridge.py\", line 915, in pattern_feature\n    builder = work_part.Features.CreateLinearPatternBuilder(\nAttributeError: 'NXOpen.Features.FeatureCollection' object has no attribute 'CreateLinearPatternBuilder'\n"
+  }
+]

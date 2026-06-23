@@ -61,6 +61,10 @@ def test_create_two_cuboids():
     r = modeling.create_two_cuboids()
     assert isinstance(r, ToolResult) and "two cuboids" in r.message
 
+def test_create_cylinder():
+    r = modeling.create_cylinder(10.0, 25.0)
+    assert isinstance(r, ToolResult) and "Cylinder" in r.message
+
 def test_revolve():
     assert isinstance(modeling.revolve("Z", 360.0), ToolResult)
 
@@ -84,6 +88,60 @@ def test_mirror_feature():
 def test_pattern_feature():
     r = modeling.pattern_feature("Hole(1)","X",4,15.0)
     assert isinstance(r, ToolResult) and "4" in r.message
+
+def test_advanced_modeling_tools_route_to_bridge(monkeypatch):
+    monkeypatch.delenv("NX_MCP_USE_MOCK_NXOPEN", raising=False)
+    calls = []
+
+    def fake_call_nx(tool, args):
+        calls.append((tool, args))
+        return {"ok": True, "message": f"bridge {tool}"}
+
+    monkeypatch.setattr(modeling.runner, "call_nx", fake_call_nx)
+
+    assert modeling.create_cylinder(12.0, 30.0).message == "bridge create_cylinder"
+    assert modeling.revolve("Z", 180.0).message == "bridge revolve"
+    assert modeling.boolean_unite("body_a", "body_b").message == "bridge boolean_unite"
+    assert modeling.boolean_subtract("body_a", "body_b").message == "bridge boolean_subtract"
+    assert modeling.add_fillet(2.0, "last", "vertical_edges").message == "bridge add_fillet"
+    assert modeling.add_chamfer(1.0, "last", "top_edges").message == "bridge add_chamfer"
+    assert modeling.add_hole(10.0, 10.0, 5.0, 4.0, 10.0).message == "bridge add_hole"
+    assert modeling.mirror_feature("last", "XZ").message == "bridge mirror_feature"
+    assert modeling.pattern_feature("last", "X", 4, 20.0).message == "bridge pattern_feature"
+
+    assert calls == [
+        (
+            "create_cylinder",
+            {"radius": 12.0, "height": 30.0, "x": 0.0, "y": 0.0, "z": 0.0, "direction": "Z"},
+        ),
+        ("revolve", {"axis": "Z", "angle_deg": 180.0}),
+        ("boolean_unite", {"target": "body_a", "tool": "body_b"}),
+        ("boolean_subtract", {"target": "body_a", "tool": "body_b"}),
+        ("add_fillet", {"radius": 2.0, "body": "last", "edges": "vertical_edges"}),
+        ("add_chamfer", {"offset": 1.0, "body": "last", "edges": "top_edges"}),
+        (
+            "add_hole",
+            {
+                "x": 10.0,
+                "y": 10.0,
+                "z": 5.0,
+                "diameter": 4.0,
+                "depth": 10.0,
+                "target": "last",
+                "direction": "-Z",
+                "placement_face": "top",
+            },
+        ),
+        ("mirror_feature", {"feature_name": "last", "plane": "XZ"}),
+        ("pattern_feature", {"feature_name": "last", "direction": "X", "count": 4, "pitch": 20.0}),
+    ]
+
+def test_advanced_modeling_validation():
+    assert isinstance(modeling.create_cylinder(0.0, 10.0), ToolError)
+    assert isinstance(modeling.add_hole(0, 0, 0, 0.0, 10.0), ToolError)
+    assert isinstance(modeling.add_fillet(0.0), ToolError)
+    assert isinstance(modeling.add_chamfer(0.0), ToolError)
+    assert isinstance(modeling.pattern_feature("last", "X", 1, 10.0), ToolError)
 
 def test_add_component():
     assert isinstance(assembly.add_component("bracket.prt",0,0,0), ToolResult)

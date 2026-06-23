@@ -1,0 +1,1326 @@
+================================================================================
+                      NX MCP SERVER — COMPLETE DOCUMENTATION
+================================================================================
+Generated: 2026-06-22
+Codebase Location: C:\Users\HP\nx-mcp
+================================================================================
+
+
+================================================================================
+1. PROJECT OVERVIEW
+================================================================================
+
+1.1 What This MCP Server Does
+-----------------------------
+This is a Model Context Protocol (MCP) server named "nx-mcp" that exposes
+CAD/CAM automation tools for Siemens NX as MCP-compatible JSON-RPC tools. It
+allows an AI assistant (e.g. Claude, via an MCP client) to programmatically
+create, modify, measure, and export 3D parts inside Siemens NX.
+
+1.2 Purpose in the Context of Siemens NX
+-----------------------------------------
+Siemens NX is a professional CAD/CAM/CAE software suite. This MCP server acts
+as a bridge between an AI assistant and NX, enabling natural-language-driven
+3D modeling. The AI can issue commands like "create a 25mm cube" or "add a
+3mm fillet" and the server translates those into real NXOpen API calls.
+
+1.3 High-Level Architecture Summary
+-------------------------------------
+The system has a DUAL-MODE architecture:
+
+  ┌──────────────┐     JSON-RPC/stdio      ┌────────────────┐
+  │  MCP Client  │ ────────────────────────>│  MCP Server    │
+  │  (e.g.Claude)│                          │  (server.py)   │
+  └──────────────┘                          └───────┬────────┘
+                                                    │
+                                     ┌──────────────┴──────────────┐
+                                     │                             │
+                              MOCK MODE (tests)           BRIDGE MODE (production)
+                              Uses mock_nxopen.py         Launches run_journal.exe
+                              No real NX needed           with bridge/nx_bridge.py
+                                                          as a long-running child
+                                                          process inside Siemens NX
+                                                          ┌───────────────────┐
+                                                          │ Siemens NX        │
+                                                          │ (NXOpen Python)   │
+                                                          │ bridge/nx_bridge  │
+                                                          │ reads JSON stdin  │
+                                                          │ writes JSON stdout│
+                                                          └───────────────────┘
+
+  - MOCK MODE: When NX_MCP_USE_MOCK_NXOPEN=1, tools use a mock NXOpen module
+    for testing without Siemens NX installed.
+
+  - BRIDGE MODE (production): Tools delegate to bridge/runner.py, which spawns
+    run_journal.exe to run bridge/nx_bridge.py as a persistent subprocess inside
+    the NX Python environment. Communication is JSON-over-stdio between the MCP
+    process and the NX bridge process.
+
+  - SOME TOOLS (export_step, export_stl, assembly tools, some measure/utility
+    tools) call NXOpen directly via NXSession without the bridge. These would
+    only work if the MCP server itself runs inside the NX Python environment.
+
+
+================================================================================
+2. TECH STACK & DEPENDENCIES
+================================================================================
+
+2.1 Programming Language
+-------------------------
+- Python >= 3.10 (specified in pyproject.toml requires-python = ">=3.10")
+- Production mode uses the Siemens NX bundled Python interpreter located at:
+    C:\Program Files\Siemens\NX2206\NXBIN\python.exe
+
+2.2 Build System
+-----------------
+- setuptools (specified in pyproject.toml [build-system])
+
+2.3 Runtime Dependencies (from pyproject.toml)
+------------------------------------------------
+- dependencies = []   (no explicit runtime dependencies in pyproject.toml)
+- The server relies on Python standard library modules: json, sys, logging,
+  os, subprocess, threading, math, argparse, inspect, importlib, dataclasses,
+  pathlib, traceback, time
+- The NXOpen module is provided by Siemens NX (not a pip-installable package)
+
+2.4 Optional Dependencies
+---------------------------
+- dev = ["pytest"]  (for running tests)
+- fastapi           (for HTTP mode — NOT listed in pyproject.toml dependencies)
+- uvicorn           (for HTTP mode — NOT listed in pyproject.toml dependencies)
+  [NOTE: The TODO_NXOPEN_ROADMAP.md explicitly notes these are missing from
+   declared dependencies]
+
+2.5 MCP SDK Version and Usage
+------------------------------
+This server does NOT use an official MCP SDK/library. It implements the MCP
+protocol manually using raw JSON-RPC over stdio:
+- Protocol version: "2024-11-05" (hardcoded in server.py initialize handler)
+- Transport: stdio (reading JSON lines from stdin, writing to stdout)
+- The server handles these MCP methods directly:
+    - "initialize"
+    - "notifications/initialized"
+    - "tools/list"
+    - "tools/call"
+
+2.6 External APIs/Services
+----------------------------
+- Siemens NXOpen Python API (the core automation API for Siemens NX)
+- Siemens NXOpen.UF (User Function API, an older lower-level NX API)
+- run_journal.exe (Siemens NX utility for running journal/macro scripts)
+- ugs_router.exe (Siemens NX utility for opening .prt files in NX)
+
+
+================================================================================
+3. PROJECT STRUCTURE
+================================================================================
+
+nx-mcp/
+├── .agents/                          # Empty directory (agent configurations placeholder)
+├── .claude/
+│   └── settings.local.json           # Claude MCP client configuration for this server
+├── .env.example                      # Example environment variables file
+├── .git/                             # Git repository metadata
+├── .pytest_cache/                    # Pytest cache directory
+│
+├── pyproject.toml                    # Python project metadata, dependencies, entry points
+├── TODO_NXOPEN_ROADMAP.md            # Development roadmap and TODO list
+├── aaa.txt                           # Informal notes about working/available tools and limitations
+│
+├── src/                              # Main source package directory
+│   ├── nx_mcp/                       # The nx_mcp Python package
+│   │   ├── __init__.py               # Empty package init
+│   │   ├── server.py                 # *** ENTRY POINT *** MCP JSON-RPC server (stdio transport)
+│   │   ├── http_server.py            # Alternative HTTP entry point using FastAPI (POST /mcp)
+│   │   ├── nx_session.py             # Singleton wrapper around NXOpen.Session
+│   │   ├── nxopen_loader.py          # Loads real NXOpen or mock NXOpen based on env var
+│   │   ├── nx_bridge.py              # CLI bridge validator (run_journal + validate_nxopen)
+│   │   ├── response.py               # ToolResult and ToolError dataclasses
+│   │   │
+│   │   ├── bridge/                   # NX Bridge subprocess communication
+│   │   │   ├── __init__.py           # Empty
+│   │   │   ├── runner.py             # NXBridgeProcess: manages persistent NX subprocess
+│   │   │   └── nx_bridge.py          # *** BRIDGE SCRIPT *** Runs INSIDE NX Python;
+│   │   │                             #     1129 lines of real NXOpen automation code
+│   │   │                             #     (dispatch loop, geometry creation, boolean ops,
+│   │   │                             #      chamfer, fillet, hole, mirror, pattern, revolve)
+│   │   │
+│   │   ├── tools/                    # MCP tool definitions (registered via decorator)
+│   │   │   ├── __init__.py           # Empty
+│   │   │   ├── registry.py           # @mcp_tool decorator and ToolRegistry class
+│   │   │   ├── file_ops.py           # File tools: create_part, open_part, save_part,
+│   │   │   │                         #             export_step, export_stl
+│   │   │   ├── sketch.py             # Sketch tools: create_sketch, draw_line, draw_rectangle,
+│   │   │   │                         #               draw_circle, draw_arc
+│   │   │   ├── modeling.py           # Modeling tools: create_cube, create_cuboid,
+│   │   │   │                         #   create_two_cuboids, create_cylinder, extrude,
+│   │   │   │                         #   revolve, boolean_unite, boolean_subtract,
+│   │   │   │                         #   add_fillet, add_chamfer, add_hole,
+│   │   │   │                         #   mirror_feature, pattern_feature
+│   │   │   ├── assembly.py           # Assembly tools: add_component, list_components,
+│   │   │   │                         #                 mate_components, reposition_component
+│   │   │   ├── measure.py            # Measurement tools: measure_distance, measure_angle,
+│   │   │   │                         #                    measure_volume, get_bounding_box
+│   │   │   └── utility.py            # Utility tools: set_view, fit_view, reset_nx_bridge,
+│   │   │                             #                take_screenshot, list_features
+│   │   │
+│   │   ├── journals/                 # NX journal scripts (run via run_journal.exe)
+│   │   │   ├── __init__.py           # Package docstring
+│   │   │   ├── validate_nxopen.py    # Validation: checks NX version availability
+│   │   │   ├── create_cube_part.py   # Creates a 25mm cube .prt file
+│   │   │   ├── create_cuboid_part.py # Creates a cuboid .prt file (args: path, L, W, H)
+│   │   │   ├── create_cylinder_part.py          # Creates a cylinder .prt file
+│   │   │   ├── create_base_plate_part.py        # Creates a 100x60x10 base plate .prt
+│   │   │   ├── create_two_cuboids_part.py       # Creates two side-by-side cuboids .prt
+│   │   │   ├── create_chamfered_cylinder_part.py         # Cylinder + chamfer .prt
+│   │   │   ├── create_chamfered_cylinder_bottom_blend_part.py  # Cylinder + chamfer + blend
+│   │   │   ├── create_circular_flange_part.py   # Flange with bolt holes (OBJ mesh import)
+│   │   │   ├── create_plate_with_corner_holes_part.py   # Plate with 4 corner holes (OBJ)
+│   │   │   ├── open_part_keep_alive.py          # Opens a part and keeps NX alive (loop)
+│   │   │   ├── inspect_boolean_builder.py       # Dev probe: boolean builder API surface
+│   │   │   ├── inspect_feature_builders.py      # Dev probe: feature builder API surface
+│   │   │   ├── probe_feature_builder_calls.py   # Dev probe: pattern/mirror builder calls
+│   │   │   ├── probe_revolve_mirror.py          # Dev probe: revolve + mirror operations
+│   │   │   └── validate_feature_operations.py   # Validation suite for all bridge operations
+│   │   │
+│   │   ├── testing/                  # Test support code
+│   │   │   ├── __init__.py           # Package docstring
+│   │   │   └── mock_nxopen.py        # Mock NXOpen module for unit testing without NX
+│   │   │
+│   │   └── utils/                    # Utility helpers
+│   │       ├── __init__.py           # Empty
+│   │       └── geometry.py           # Geometry helpers: make_point, make_vector, plane_normal
+│   │
+│   └── nx_mcp.egg-info/             # Generated package metadata
+│
+├── tests/                            # Unit test suite
+│   ├── conftest.py                   # Pytest fixtures (auto-enables mock NXOpen)
+│   ├── test_tools.py                 # Tests for all MCP tools (38 test functions)
+│   └── test_nx_bridge.py            # Tests for the NX bridge CLI module
+│
+├── live_validation/                  # Live NX validation results and .prt output files
+│   ├── current3/                     # Validation session directory
+│   ├── revolve_mirror_probe/         # Probe results directories (1-5)
+│   ├── revolve_mirror_probe2/
+│   ├── revolve_mirror_probe3/
+│   ├── revolve_mirror_probe4/
+│   ├── revolve_mirror_probe5/
+│   ├── feature_builder_inspection.json   # Recorded API surface inspection
+│   ├── feature_builder_probe.json        # Recorded builder call probing
+│   ├── feature_validation_results.json   # Recorded feature operation validation
+│   ├── validate_add_chamfer.prt          # Validated chamfer result
+│   ├── validate_add_fillet.prt           # Validated fillet result
+│   └── validate_create_cylinder.prt      # Validated cylinder result
+│
+├── nx_result_watcher.ps1             # PowerShell: watches for new .prt files and opens them
+├── start_nx_result_watcher.cmd       # CMD launcher for the PowerShell watcher
+├── open_current_nx_result.cmd        # CMD: opens a specific .prt in NX
+├── open_latest_nx_result.vbs         # VBScript: opens a specific .prt in NX (hidden window)
+├── latest_nx_result.txt              # Path to the most recently generated .prt file
+│
+├── *.prt                             # Generated Siemens NX part files (binary)
+├── *.stl                             # Generated STL export files
+└── *.obj                             # Generated Wavefront OBJ mesh files
+
+3.1 Entry Points (from pyproject.toml [project.scripts])
+---------------------------------------------------------
+  nx-mcp       -> nx_mcp.server:main       (primary MCP server, stdio transport)
+  nx-mcp-http  -> nx_mcp.http_server:main  (HTTP wrapper, FastAPI on port 8765)
+  nx-mcp-nx    -> nx_mcp.nx_bridge:main    (CLI bridge validator)
+
+
+================================================================================
+4. MCP SERVER CONFIGURATION
+================================================================================
+
+4.1 Server Initialization
+--------------------------
+File: src/nx_mcp/server.py
+
+The server is a simple JSON-RPC server that reads newline-delimited JSON from
+stdin and writes responses to stdout. On startup:
+
+  1. Tool modules are imported, which triggers @mcp_tool decorators to register
+     all tools in the global _registry dict.
+  2. Logging is configured to stderr at DEBUG level with format:
+     "[nx-mcp] LEVEL message"
+  3. main() logs the tool count, then enters an infinite loop reading stdin
+     line by line, parsing JSON, and dispatching to handle().
+
+4.2 Transport Method
+---------------------
+PRIMARY: stdio (newline-delimited JSON-RPC)
+  - Input: sys.stdin (one JSON object per line)
+  - Output: sys.stdout (one JSON response per line, flushed immediately)
+
+ALTERNATIVE: HTTP POST (via http_server.py)
+  - Endpoint: POST /mcp on 127.0.0.1:8765
+  - Uses FastAPI + uvicorn
+  - Accepts JSON body, returns JSON response
+  - Delegates to the same handle() function from server.py
+
+4.3 Capability Registration (MCP initialize)
+----------------------------------------------
+When the client sends an "initialize" request, the server responds with:
+  {
+    "protocolVersion": "2024-11-05",
+    "capabilities": {"tools": {}},
+    "serverInfo": {"name": "nx-mcp", "version": "0.1.0"}
+  }
+
+Only "tools" capability is advertised. No resources or prompts are declared.
+
+4.4 MCP Client Configuration (.claude/settings.local.json)
+------------------------------------------------------------
+The Claude MCP client is configured as follows:
+  {
+    "mcpServers": {
+      "nx-mcp": {
+        "command": "C:\\Program Files\\Siemens\\NX2206\\NXBIN\\python.exe",
+        "args": ["-m", "nx_mcp.server"],
+        "env": {
+          "UGII_BASE_DIR": "C:\\Program Files\\Siemens\\NX2206",
+          "PYTHONPATH": "C:\\projects\\nx_mcp\\src"
+        }
+      }
+    }
+  }
+
+This means the MCP server is intended to run under Siemens NX's own Python
+interpreter, with UGII_BASE_DIR pointing to the NX installation.
+
+4.5 Tool Registration Mechanism
+---------------------------------
+File: src/nx_mcp/tools/registry.py
+
+- A global dict _registry stores all tools.
+- The @mcp_tool(name, description) decorator registers a function under the
+  given name with its description.
+- ToolRegistry.list_tools() generates the MCP tool list format with:
+    - name, description
+    - inputSchema (auto-generated from function signature via inspect)
+- Schema type mapping:
+    - float/int annotations -> "number"
+    - bool annotations -> "boolean"
+    - everything else -> "string"
+- Parameters without defaults are marked as "required".
+
+
+================================================================================
+5. TOOLS (Complete List — 30 Tools)
+================================================================================
+
+All tools return either ToolResult (success) or ToolError (failure).
+ToolResult.__str__() returns "OK: {message}"
+ToolError.__str__() returns "ERROR: {error}"
+The MCP server wraps the string result as: {"content": [{"type": "text", "text": str(result)}]}
+
+
+--- FILE OPERATIONS (5 tools) ---
+File: src/nx_mcp/tools/file_ops.py
+
+TOOL 1: create_part
+  Description: "Create a new empty NX part file"
+  Parameters:
+    - filename (string, REQUIRED): Name/path for the new .prt file
+  Returns: ToolResult with "Created part: {filename}"
+  NX API: Session.Parts.NewDisplay(filename, Part.Units.Millimeters)
+  Bridge: Yes — delegates to runner.call_nx("create_part", ...) in production
+  Mock: Creates part via mock NXSession
+  Error Handling: Catches all exceptions, returns ToolError
+
+TOOL 2: open_part
+  Description: "Open an existing NX part file by full path"
+  Parameters:
+    - filepath (string, REQUIRED): Full path to existing .prt file
+  Returns: ToolResult with "Opened: {filepath}"
+  NX API: Session.Parts.Open(filepath)
+  Bridge: Yes — delegates to runner.call_nx("open_part", ...) in production
+  Error Handling: Catches all exceptions, returns ToolError
+
+TOOL 3: save_part
+  Description: "Save the current work part"
+  Parameters: None
+  Returns: ToolResult with "Part saved"
+  NX API: Session.Parts.Work.Save() [mock] or
+          Session.Parts.Work.Save(SaveComponents.TrueValue, CloseAfterSave.FalseValue) [bridge]
+  Bridge: Yes — delegates to runner.call_nx("save_part", ...) in production
+  Error Handling: Catches all exceptions, returns ToolError
+
+TOOL 4: export_step
+  Description: "Export current part as STEP file"
+  Parameters:
+    - output_path (string, REQUIRED): Destination path for the .stp file
+  Returns: ToolResult with "Exported STEP: {output_path}"
+  NX API: Session.DexManager.CreateStepCreator()
+          - Sets ObjectTypes.Solids = True
+          - Sets OutputFile = output_path
+          - Calls Commit() then Destroy()
+  Bridge: NO — calls NXSession directly (requires MCP server to run inside NX Python)
+  Error Handling: Catches all exceptions, returns ToolError
+  [NOTE: Does not use bridge mode. This tool only works when the MCP server
+   process itself has access to NXOpen]
+
+TOOL 5: export_stl
+  Description: "Export current part as STL file"
+  Parameters:
+    - output_path (string, REQUIRED): Destination path for the .stl file
+  Returns: ToolResult with "Exported STL: {output_path}"
+  NX API: Session.DexManager.CreateStlCreator()
+          - Sets OutputFile = output_path
+          - Calls Commit() then Destroy()
+  Bridge: NO — calls NXSession directly
+  Error Handling: Catches all exceptions, returns ToolError
+  [NOTE: Same limitation as export_step]
+
+
+--- SKETCH TOOLS (5 tools) ---
+File: src/nx_mcp/tools/sketch.py
+
+TOOL 6: create_sketch
+  Description: "Create a new sketch on a plane XY XZ or YZ"
+  Parameters:
+    - plane (string, optional, default="XY"): Sketch plane name
+  Returns: ToolResult with "Sketch created on {plane} plane"
+  NX API (bridge): Sets ACTIVE_SKETCH_PLANE global variable in bridge
+  Bridge: Yes — delegates to runner.call_nx("create_sketch", ...) in production
+  Mock: Returns success immediately (no real sketch creation)
+  [NOTE: In bridge mode, this only sets the active plane reference; it does
+   not create a real NX Sketch object with constraints]
+
+TOOL 7: draw_line
+  Description: "Draw a line from x1 y1 to x2 y2"
+  Parameters:
+    - x1 (number, REQUIRED): Start X coordinate
+    - y1 (number, REQUIRED): Start Y coordinate
+    - x2 (number, REQUIRED): End X coordinate
+    - y2 (number, REQUIRED): End Y coordinate
+  Returns: ToolResult with "Line {x1},{y1} to {x2},{y2}"
+  NX API: work_part.Curves.CreateLine(Point3d(x1,y1,0), Point3d(x2,y2,0))
+  Bridge: NO — calls NXSession.work_part().Curves.CreateLine() directly
+  [NOTE: Always uses Z=0; no bridge mode support]
+
+TOOL 8: draw_rectangle
+  Description: "Draw rectangle from corner x y with width and height"
+  Parameters:
+    - x (number, REQUIRED): Corner X coordinate
+    - y (number, REQUIRED): Corner Y coordinate
+    - width (number, REQUIRED): Rectangle width
+    - height (number, REQUIRED): Rectangle height
+  Returns: ToolResult with "Rectangle {x},{y} size {width}x{height}"
+  NX API: Creates 4 lines forming a closed rectangle using Curves.CreateLine()
+  Bridge: Yes — delegates to runner.call_nx("draw_rectangle", ...) in production
+  Bridge implementation: Uses _point_on_active_plane() to map 2D coords to 3D
+    based on ACTIVE_SKETCH_PLANE; stores created lines in _state["last_curves"]
+
+TOOL 9: draw_circle
+  Description: "Draw circle at cx cy with radius"
+  Parameters:
+    - cx (number, REQUIRED): Center X coordinate
+    - cy (number, REQUIRED): Center Y coordinate
+    - radius (number, REQUIRED): Circle radius
+  Returns: ToolResult with "Circle {cx},{cy} R={radius}"
+  NX API: work_part.Curves.CreateArc(center, normal, radius, 0.0, 2*pi)
+  Bridge: Yes — delegates to runner.call_nx("draw_circle", ...) in production
+  Bridge implementation: Uses _normal_for_active_plane() for arc normal;
+    validates radius > 0; stores circle in _state["last_curves"]
+
+TOOL 10: draw_arc
+  Description: "Draw arc at cx cy with radius from start_angle to end_angle degrees"
+  Parameters:
+    - cx (number, REQUIRED): Center X coordinate
+    - cy (number, REQUIRED): Center Y coordinate
+    - radius (number, REQUIRED): Arc radius
+    - start_angle (number, REQUIRED): Start angle in degrees
+    - end_angle (number, REQUIRED): End angle in degrees
+  Returns: ToolResult with arc details
+  NX API: work_part.Curves.CreateArc(center, normal, radius, start_rad, end_rad)
+  Bridge: NO — calls NXSession directly
+  [NOTE: No bridge mode support; converts degrees to radians internally]
+
+
+--- MODELING TOOLS (13 tools) ---
+File: src/nx_mcp/tools/modeling.py
+
+TOOL 11: create_cube
+  Description: "Create a cube with side length mm from origin x y z"
+  Parameters:
+    - size (number, optional, default=10.0): Side length in mm
+    - x (number, optional, default=0.0): Origin X
+    - y (number, optional, default=0.0): Origin Y
+    - z (number, optional, default=0.0): Origin Z
+  Returns: ToolResult with "Cube {size}mm at ({x},{y},{z})"
+  Validation: size must be > 0
+  Bridge: Yes — delegates to runner.call_nx("create_cube", ...) in production
+  Bridge implementation (1129-line nx_bridge.py):
+    1. create_sketch("XY")
+    2. draw_rectangle(x, y, size, size)
+    3. extrude(size, z)
+    Creates a cube by sketch+extrude workflow
+  Mock: Uses CreateExtrudeBuilder mock
+
+TOOL 12: create_cuboid
+  Description: "Create a cuboid with length width height mm from origin x y z"
+  Parameters:
+    - length (number, optional, default=40.0): Length in mm
+    - width (number, optional, default=25.0): Width in mm
+    - height (number, optional, default=20.0): Height in mm
+    - x (number, optional, default=0.0): Origin X
+    - y (number, optional, default=0.0): Origin Y
+    - z (number, optional, default=0.0): Origin Z
+  Returns: ToolResult with dimensions and origin
+  Validation: All dimensions must be > 0
+  Bridge: Yes
+  Bridge implementation: Uses Features.CreateBlockFeatureBuilder() with
+    OriginAndEdgeLengths type, SetOriginAndLengths(), BooleanType.Create
+
+TOOL 13: create_two_cuboids
+  Description: "Create two cuboids next to each other"
+  Parameters: None
+  Returns: ToolResult with "Created two cuboids next to each other"
+  Bridge: Yes
+  Bridge implementation: Calls create_cuboid(40,25,20,0,0,0) then
+    create_cuboid(30,25,20,45,0,0) — two blocks separated by 5mm gap
+
+TOOL 14: create_cylinder
+  Description: "Create a cylinder with radius height mm from origin x y z along direction X Y or Z"
+  Parameters:
+    - radius (number, optional, default=10.0): Cylinder radius in mm
+    - height (number, optional, default=20.0): Cylinder height in mm
+    - x (number, optional, default=0.0): Origin X
+    - y (number, optional, default=0.0): Origin Y
+    - z (number, optional, default=0.0): Origin Z
+    - direction (string, optional, default="Z"): Axis direction (X/Y/Z/+X/-X/+Y/-Y/+Z/-Z)
+  Returns: ToolResult with cylinder specs
+  Validation: radius and height must be > 0
+  Bridge: Yes
+  Bridge implementation: Uses Features.CreateCylinderBuilder() with:
+    - Diameter = radius * 2.0
+    - Height = height
+    - Axis.Direction = direction vector
+    - Commit() (not CommitFeature())
+
+TOOL 15: extrude
+  Description: "Extrude active sketch by distance mm"
+  Parameters:
+    - distance (number, REQUIRED): Extrusion distance in mm
+    - start (number, optional, default=0.0): Start offset in mm
+  Returns: ToolResult with "Extruded {distance}mm"
+  Bridge: Yes
+  Bridge implementation: Uses Features.CreateExtrudeBuilder() with:
+    - Creates Section from _state["last_curves"] using ScRuleFactory.CreateRuleCurveDumb
+    - Sets direction to Z-axis
+    - Sets start/end extend values
+    - CommitFeature(), Destroy()
+    - Clears last_curves state afterward
+  Mock: Uses CreateExtrudeBuilder mock
+
+TOOL 16: revolve
+  Description: "Revolve active sketch around axis by angle_deg"
+  Parameters:
+    - axis (string, optional, default="Z"): Revolution axis
+    - angle_deg (number, optional, default=360.0): Revolution angle in degrees
+  Returns: ToolResult with revolution details
+  Bridge: Yes
+  Bridge implementation: Uses UF_SESSION.Modl.CreateRevolution() (legacy UF API)
+    with curve tags, angle limits, direction vector, and NULLSIGN
+  Mock: Uses CreateRevolveBuilder mock
+
+TOOL 17: boolean_unite
+  Description: "Unite two solid bodies"
+  Parameters:
+    - target (string, REQUIRED): Target body name/reference
+    - tool (string, REQUIRED): Tool body name/reference
+  Returns: ToolResult with united body names
+  Bridge: Yes
+  Bridge implementation: Uses Features.CreateBooleanBuilder() with:
+    - Resolves body references via _resolve_body()
+    - Validates target != tool body
+    - Sets BooleanType.Unite
+    - Complex _set_boolean_inputs() handles multiple NXOpen API variants
+    - CommitFeature(), Destroy()
+  Error: "Boolean target and tool resolve to the same body"
+
+TOOL 18: boolean_subtract
+  Description: "Subtract tool body from target body"
+  Parameters:
+    - target (string, REQUIRED): Target body name/reference
+    - tool (string, REQUIRED): Tool body name/reference
+  Returns: ToolResult with subtracted body names
+  Bridge: Yes
+  Bridge implementation: Same as boolean_unite but with BooleanType.Subtract
+
+TOOL 19: add_fillet
+  Description: "Add edge fillet with radius mm to edges such as outer_edges vertical_edges top_edges bottom_edges"
+  Parameters:
+    - radius (number, REQUIRED): Fillet radius in mm
+    - body (string, optional, default="last"): Body reference
+    - edges (string, optional, default="outer_edges"): Edge selection hint
+      Supported values: all/all_edges/outer/outer_edges, vertical/vertical_edges,
+      top/top_edges, bottom/bottom_edges
+  Returns: ToolResult with fillet details
+  Validation: radius must be > 0
+  Bridge: Yes
+  Bridge implementation: Uses Features.CreateEdgeBlendBuilder() with:
+    - Edge resolution via _resolve_edges() (body bounds, Z-range classification)
+    - ScRuleFactory.CreateRuleEdgeMultipleSeedTangent()
+    - Extensive builder configuration (Tolerance, RemoveSelfIntersection,
+      RollOverSmoothEdge, OverlapOption, BlendOrder, etc.)
+    - AddChainset(collector, radius)
+    - CommitFeature(), Destroy()
+
+TOOL 20: add_chamfer
+  Description: "Add chamfer with offset mm to edges such as outer_edges vertical_edges top_edges bottom_edges"
+  Parameters:
+    - offset (number, REQUIRED): Chamfer offset in mm
+    - body (string, optional, default="last"): Body reference
+    - edges (string, optional, default="outer_edges"): Edge selection hint
+  Returns: ToolResult with chamfer details
+  Validation: offset must be > 0
+  Bridge: Yes
+  Bridge implementation: Uses Features.CreateChamferBuilder() with:
+    - ChamferOption.OffsetAndAngle, OffsetMethod.EdgesAlongFaces
+    - FirstOffset = offset, SecondOffset = offset, Angle = "45"
+    - Tolerance = 0.01
+    - Edge rules via CreateRuleEdgeTangent per edge
+    - SmartCollector assignment
+    - CommitFeature(), Destroy()
+
+TOOL 21: add_hole
+  Description: "Add hole at x y z with diameter and depth in mm on a target body"
+  Parameters:
+    - x (number, REQUIRED): Hole center X coordinate
+    - y (number, REQUIRED): Hole center Y coordinate
+    - z (number, REQUIRED): Hole center Z coordinate
+    - diameter (number, REQUIRED): Hole diameter in mm
+    - depth (number, REQUIRED): Hole depth in mm
+    - target (string, optional, default="last"): Target body reference
+    - direction (string, optional, default="-Z"): Hole direction
+    - placement_face (string, optional, default="top"): Placement face hint
+  Returns: ToolResult with hole details
+  Validation: diameter and depth must be > 0
+  Bridge: Yes
+  Bridge implementation: Two strategies:
+    1. Try native CreateHoleBuilder if available (NX API varies by release)
+    2. Fallback: Create a cylinder and boolean-subtract it
+       (_subtract_cylinder_hole function)
+
+TOOL 22: mirror_feature
+  Description: "Mirror a feature about a plane (XY/XZ/YZ)"
+  Parameters:
+    - feature_name (string, REQUIRED): Feature to mirror (name or "last")
+    - plane (string, optional, default="XZ"): Mirror plane
+  Returns: ToolResult with mirrored feature name
+  Bridge: Yes
+  Bridge implementation:
+    1. Creates a datum plane via CreateDatumPlaneBuilder with SetFixedDatumPlane()
+    2. Creates MirrorFeatureBuilder
+    3. Sets FeatureSet or Features with source feature
+    4. Sets PlaneOption to Existing
+    5. Assigns mirror plane via Plane.SetValue() or MirrorPlane property
+    6. CommitFeature(), Destroy()
+
+TOOL 23: pattern_feature
+  Description: "Linear pattern: count items spaced pitch mm along direction"
+  Parameters:
+    - feature_name (string, REQUIRED): Feature to pattern
+    - direction (string, optional, default="X"): Pattern direction
+    - count (number [int], optional, default=3): Number of pattern instances
+    - pitch (number, optional, default=10.0): Spacing between instances in mm
+  Returns: ToolResult with pattern details
+  Validation: count must be >= 2; pitch must be non-zero
+  Bridge: Yes
+  Bridge implementation:
+    1. Tries CreatePatternFeatureBuilder, then CreateLinearPatternBuilder
+    2. Sets FeatureList/Features/Feature with source
+    3. Configures PatternService:
+       - If RectangularDefinition exists: XDirection, XSpacing.NCopies, XSpacing.PitchDistance
+       - Else: PatternCount, Pitch, Direction
+    4. CommitFeature(), Destroy()
+
+
+--- ASSEMBLY TOOLS (4 tools) ---
+File: src/nx_mcp/tools/assembly.py
+
+TOOL 24: add_component
+  Description: "Add a component part into assembly at (x,y,z)"
+  Parameters:
+    - part_path (string, REQUIRED): Path to component .prt file
+    - x (number, optional, default=0.0): Position X
+    - y (number, optional, default=0.0): Position Y
+    - z (number, optional, default=0.0): Position Z
+  Returns: ToolResult with component info
+  NX API: AssemblyManager.CreateAddComponentBuilder(), ReferenceSet = "MODEL"
+  Bridge: NO — calls NXSession directly
+  [NOTE: Placeholder-level; does not actually set position or load the part file]
+
+TOOL 25: list_components
+  Description: "List all components in the current assembly"
+  Parameters: None
+  Returns: ToolResult with comma-separated component display names
+  NX API: ComponentAssembly.RootComponent.GetChildren()
+  Bridge: NO — calls NXSession directly
+
+TOOL 26: mate_components
+  Description: "Add a constraint between two component faces"
+  Parameters:
+    - comp1 (string, REQUIRED): First component name
+    - face1 (string, REQUIRED): First face reference
+    - comp2 (string, REQUIRED): Second component name
+    - face2 (string, REQUIRED): Second face reference
+    - constraint_type (string, optional, default="Coincident"): Constraint type
+  Returns: ToolResult with constraint info
+  NX API: AssemblyManager.CreateAssemblyConstraintBuilder()
+  Bridge: NO — calls NXSession directly
+  [NOTE: Placeholder-level; does not resolve components or faces]
+
+TOOL 27: reposition_component
+  Description: "Move a component to absolute position (x,y,z)"
+  Parameters:
+    - component_name (string, REQUIRED): Component to reposition
+    - x (number, REQUIRED): Target X
+    - y (number, REQUIRED): Target Y
+    - z (number, REQUIRED): Target Z
+  Returns: ToolResult with repositioned component info
+  NX API: AssemblyManager.CreateRepositionBuilder(None)
+  Bridge: NO — calls NXSession directly
+  [NOTE: Placeholder-level]
+
+
+--- MEASUREMENT TOOLS (4 tools) ---
+File: src/nx_mcp/tools/measure.py
+
+TOOL 28: measure_distance
+  Description: "Straight-line distance between two 3D points"
+  Parameters:
+    - x1, y1, z1 (number, all REQUIRED): First point coordinates
+    - x2, y2, z2 (number, all REQUIRED): Second point coordinates
+  Returns: ToolResult with "Distance: {d:.4f} mm"
+  NX API: None — pure Python math (sqrt of sum of squared differences)
+  Bridge: NO
+  [NOTE: Does not use NX measurement; pure Euclidean math]
+
+TOOL 29: measure_angle
+  Description: "Angle in degrees between two vectors"
+  Parameters:
+    - x1, y1, z1 (number, all REQUIRED): First vector components
+    - x2, y2, z2 (number, all REQUIRED): Second vector components
+  Returns: ToolResult with "Angle: {angle:.4f}°"
+  NX API: None — pure Python math (dot product / magnitudes -> acos)
+  Bridge: NO
+  Edge cases: Returns ToolError for zero-length vectors; clamps acos input to [-1, 1]
+
+TOOL 30: measure_volume
+  Description: "Volume of a box (width × height × depth) in mm"
+  Parameters:
+    - width (number, REQUIRED): Box width
+    - height (number, REQUIRED): Box height
+    - depth (number, REQUIRED): Box depth
+  Returns: ToolResult with "Volume: {v:.4f} mm³  ({v/1000:.4f} cm³)"
+  NX API: None — pure multiplication (w * h * d)
+  Bridge: NO
+  [NOTE: Computes box volume only; does not query NX mass properties]
+
+TOOL 31: get_bounding_box
+  Description: "Get bounding box of the current work part"
+  Parameters: None
+  Returns: ToolResult with "Bounding box computed for: {part}"
+  NX API: NXSession.work_part() (just references the work part object)
+  Bridge: NO
+  [NOTE: Placeholder — does not compute actual bounding box coordinates]
+
+
+--- UTILITY TOOLS (5 tools) ---
+File: src/nx_mcp/tools/utility.py
+
+TOOL 32: set_view
+  Description: "Set viewport to TOP / FRONT / RIGHT / ISO"
+  Parameters:
+    - view_name (string, optional, default="ISO"): View orientation name
+  Returns: ToolResult with "View set to {view_name}"
+  Valid values: TOP, FRONT, RIGHT, BACK, LEFT, BOTTOM, ISO
+  NX API: UI.GetUI().ModelingViews.WorkView.Orient(view_name)
+  Bridge: NO
+  Validation: Returns ToolError for invalid view names
+
+TOOL 33: fit_view
+  Description: "Fit model to fill the NX viewport"
+  Parameters: None
+  Returns: ToolResult with "View fitted"
+  NX API: UI.GetUI().ModelingViews.WorkView.Fit()
+  Bridge: Yes — delegates to runner.call_nx("fit_view", ...) in production
+
+TOOL 34: reset_nx_bridge
+  Description: "Restart the live NX automation bridge"
+  Parameters: None
+  Returns: ToolResult with "NX bridge reset"
+  Action: Calls runner.reset_nx_bridge() which terminates and restarts the
+    NX bridge subprocess (NXBridgeProcess.reset())
+
+TOOL 35: take_screenshot
+  Description: "Save viewport screenshot to PNG"
+  Parameters:
+    - output_path (string, optional, default="screenshot.png"): PNG file path
+  Returns: ToolResult with "Screenshot saved: {output_path}"
+  NX API: UI.ModelingViews.WorkView.SaveImage(output_path, 1920, 1080)
+  Bridge: NO — calls NXSession directly
+  [NOTE: Hardcoded resolution of 1920x1080]
+
+TOOL 36: list_features
+  Description: "List all features in the part feature tree"
+  Parameters: None
+  Returns: ToolResult with "Features: {comma-separated names}" or "Features: none"
+  NX API: work_part.Features.ToArray(), then GetFeatureName() on each
+  Bridge: NO — calls NXSession directly
+
+---
+BRIDGE-ONLY TOOL (not registered as MCP tool, but available in bridge dispatch):
+
+draw_cylinder_profile
+  Description: Draws two concentric circles (outer/inner) for tube-like profiles
+  Parameters: outer_radius, inner_radius
+  Available only in bridge/nx_bridge.py dispatch(), not in MCP tool registry
+
+
+================================================================================
+6. RESOURCES
+================================================================================
+
+NO MCP resources are exposed by this server. The capabilities declaration
+contains only {"tools": {}} with no resources key.
+
+
+================================================================================
+7. PROMPTS
+================================================================================
+
+NO MCP prompt templates are defined. The server does not implement any
+"prompts/list" or "prompts/get" methods.
+
+
+================================================================================
+8. SIEMENS NX INTEGRATION
+================================================================================
+
+8.1 Communication Architecture
+-------------------------------
+The server uses TWO integration methods simultaneously:
+
+METHOD A: NX Bridge Process (primary, production)
+  File: src/nx_mcp/bridge/runner.py + src/nx_mcp/bridge/nx_bridge.py
+
+  1. runner.py manages a persistent child process:
+     - Spawns: run_journal.exe bridge/nx_bridge.py
+     - run_journal.exe is Siemens NX's journal execution tool
+     - The bridge script runs inside NX's Python environment with full NXOpen access
+     - Communication: JSON-over-stdio (newline-delimited)
+     - Sending: runner writes JSON {"tool": "...", "args": {...}} to child's stdin
+     - Receiving: runner reads JSON {"ok": true/false, "message"/"error": "..."} from stdout
+     - Thread-safe: Uses threading.Lock for all bridge calls
+     - Auto-start: Bridge subprocess is launched on first tool call
+     - Timeout: subprocess.Popen with no timeout (but run_journal CLI has 120s default)
+
+  2. bridge/nx_bridge.py (1129 lines) runs inside Siemens NX:
+     - Imports NXOpen and NXOpen.UF directly at top level
+     - Gets SESSION = NXOpen.Session.GetSession()
+     - Gets UF_SESSION = NXOpen.UF.UFSession.GetUFSession()
+     - Maintains persistent state: last_curves, last_feature, last_body, features dict, bodies dict
+     - dispatch() function maps tool names to local functions
+     - main() reads JSON lines from stdin, dispatches, writes JSON results to stdout
+
+METHOD B: Direct NXSession calls (fallback/some tools)
+  Files: src/nx_mcp/nx_session.py + src/nx_mcp/nxopen_loader.py
+
+  Some tools (export_step, export_stl, assembly tools, draw_line, draw_arc,
+  set_view, take_screenshot, list_features) call NXSession directly without the
+  bridge. This only works if the MCP server process itself has NXOpen available.
+  nxopen_loader.py handles loading:
+    - If NX_MCP_USE_MOCK_NXOPEN=1: loads mock_nxopen.py
+    - Otherwise: importlib.import_module("NXOpen")
+
+METHOD C: Journal scripts (standalone, not used by MCP server directly)
+  Files: src/nx_mcp/journals/*.py + src/nx_mcp/nx_bridge.py (CLI)
+
+  Standalone Python scripts meant to be run via run_journal.exe directly.
+  Used for validation, testing, and creating specific parts independently.
+  The nx_bridge.py CLI (different from the bridge module) provides:
+    nx-mcp-nx validate  (runs validate_nxopen.py journal)
+
+8.2 NX-Specific Setup Required
+-------------------------------
+- Siemens NX version: NX2206 (hardcoded in paths, but likely works with other versions)
+- Installation path: C:\Program Files\Siemens\NX2206\
+- Required executables:
+    - NXBIN\run_journal.exe (journal script runner)
+    - NXBIN\python.exe (NX's Python interpreter)
+    - NXBIN\ugs_router.exe (file opener, used by watcher scripts)
+- Environment variable: UGII_BASE_DIR must point to NX installation root
+
+8.3 How NX is Launched
+-----------------------
+The server does NOT launch NX itself. The bridge process runs via run_journal.exe
+which starts NX internally. For the result watcher scripts, NX is assumed to be
+installed and ugs_router.exe is used to open generated .prt files.
+
+8.4 NXOpen APIs Used (comprehensive list from bridge/nx_bridge.py)
+-------------------------------------------------------------------
+Session management:
+  - NXOpen.Session.GetSession()
+  - NXOpen.UF.UFSession.GetUFSession()
+  - SESSION.Parts.NewDisplay(path, Units.Millimeters)
+  - SESSION.Parts.Open(filepath)
+  - SESSION.Parts.Work.Save(SaveComponents.TrueValue, CloseAfterSave.FalseValue)
+
+Part/Feature queries:
+  - work_part.Features.ToArray()
+  - work_part.Bodies.ToArray()
+  - feature.GetBodies()
+  - feature.GetFeatureName() / .Name / .JournalIdentifier
+  - body.GetEdges()
+  - body.Tag
+
+Geometry primitives:
+  - NXOpen.Point3d(x, y, z)
+  - NXOpen.Vector3d(x, y, z)
+  - NXOpen.Features.Feature.Null
+  - NXOpen.Features.BooleanFeature.Null
+  - NXOpen.Body.Null
+  - NXOpen.Edge.Null
+  - NXOpen.NXObject.Null
+
+Curve creation:
+  - work_part.Curves.CreateLine(pt1, pt2)
+  - work_part.Curves.CreateArc(center, normal, radius, start, end)
+
+Feature builders:
+  - Features.CreateBlockFeatureBuilder(null) — cuboid/cube creation
+  - Features.CreateCylinderBuilder(null) — cylinder creation
+  - Features.CreateExtrudeBuilder(null) — extrusion
+  - Features.CreateBooleanBuilder(null) — unite/subtract
+  - Features.CreateEdgeBlendBuilder(null) — fillets
+  - Features.CreateChamferBuilder(null) — chamfers
+  - Features.CreateHoleBuilder(null) — holes (if available)
+  - Features.CreateMirrorFeatureBuilder(null) — mirror
+  - Features.CreateDatumPlaneBuilder(null) — datum planes for mirror
+  - Features.CreatePatternFeatureBuilder(null) — patterns
+  - Features.CreateLinearPatternBuilder(null) — fallback pattern builder
+
+Smart object creation:
+  - work_part.Directions.CreateDirection(origin, vector, UpdateOption)
+  - work_part.Axes.CreateAxis(origin, direction, UpdateOption)
+  - work_part.Sections.CreateSection(chaining_tol, dist_tol, angle_tol)
+  - work_part.ScRuleFactory.CreateRuleCurveDumb([curve])
+  - work_part.ScRuleFactory.CreateRuleEdgeTangent(edge, null, ...)
+  - work_part.ScRuleFactory.CreateRuleEdgeMultipleSeedTangent(edges, tol, ...)
+  - work_part.ScRuleFactory.CreateRuleBodyDumb(bodies, True)
+  - work_part.ScCollectors.CreateCollector()
+
+UF (User Function) API:
+  - UF_SESSION.Modl.AskBoundingBox(body_tag) — bounding box
+  - UF_SESSION.Modeling.AskEdgeVerts(edge_tag) — edge vertex positions
+  - UF_SESSION.Modl.CreateRevolution(...) — revolution feature creation
+  - UF_SESSION.Csys.AskWcs() — work coordinate system
+  - UF_SESSION.Csys.AskMatrixOfObject(wcs_tag)
+  - UF_SESSION.Curve.CreateArc(arc) — low-level arc creation
+
+View management:
+  - work_part.ModelingViews.WorkView.Fit()
+  - DexManager.CreateStepCreator() / CreateStlCreator()
+  - DexManager.CreateWavefrontObjImporter() (used in journal scripts)
+
+8.5 State Management in Bridge
+-------------------------------
+The bridge maintains a _state dict:
+  - "last_curves": list of last created curve objects (consumed by extrude/revolve)
+  - "last_feature": last created feature object
+  - "last_body": last created/modified body object
+  - "features": dict mapping lowercase feature name -> feature object
+  - "bodies": dict mapping lowercase body name -> body object
+
+Body/feature references like "last", "previous", "last body" are resolved via
+_resolve_body() and _resolve_feature() which check state first, then iterate
+through work part features/bodies.
+
+
+================================================================================
+9. ENVIRONMENT & SETUP
+================================================================================
+
+9.1 Required Environment Variables
+------------------------------------
+UGII_BASE_DIR
+  - Description: Root directory of the Siemens NX installation
+  - Example: C:\Program Files\Siemens\NX2206
+  - Used by: find_run_journal() in nx_bridge.py, and bridge/runner.py
+  - Required: YES (for production/bridge mode)
+
+NX_RUN_JOURNAL (optional)
+  - Description: Full path to run_journal.exe
+  - Default: C:\Program Files\Siemens\NX2206\NXBIN\run_journal.exe
+  - Used by: bridge/runner.py NXBridgeProcess._start()
+
+PYTHONPATH
+  - Description: Must include the src/ directory of this project
+  - Example: C:\projects\nx_mcp\src (or wherever the project is located)
+  - Required: YES (so Python can find the nx_mcp package)
+
+NX_MCP_USE_MOCK_NXOPEN (test only)
+  - Description: When set to "1", loads mock NXOpen instead of real NXOpen
+  - Used by: nxopen_loader.py, file_ops.py, sketch.py, modeling.py, utility.py
+  - Required: Only for testing without Siemens NX
+
+9.2 Configuration Files
+-------------------------
+pyproject.toml
+  - Project metadata, dependencies, entry points, build configuration
+  - Schema: standard PEP 621 project table
+
+.env.example
+  - Example environment variable configuration
+  - Contains: NX_RUN_JOURNAL=C:\Program Files\Siemens\NX2206\NXBIN\run_journal.exe
+
+.claude/settings.local.json
+  - Claude MCP client configuration
+  - Schema: {"mcpServers": {"nx-mcp": {"command": "...", "args": [...], "env": {...}}}}
+
+9.3 How to Install Dependencies
+---------------------------------
+# Install the package in development mode:
+pip install -e ".[dev]"
+
+# Or install just the package:
+pip install -e .
+
+# For HTTP mode (not in declared dependencies):
+pip install fastapi uvicorn
+
+9.4 How to Run the Server
+---------------------------
+# OPTION 1: Primary MCP server (stdio transport)
+# Run from NX's Python interpreter for production:
+"C:\Program Files\Siemens\NX2206\NXBIN\python.exe" -m nx_mcp.server
+
+# Or using the entry point (after pip install -e .):
+nx-mcp
+
+# OPTION 2: HTTP server wrapper
+"C:\Program Files\Siemens\NX2206\NXBIN\python.exe" -m nx_mcp.http_server
+# Or:
+nx-mcp-http
+# Listens on http://127.0.0.1:8765/mcp
+
+# OPTION 3: Bridge validation (check NX connectivity)
+nx-mcp-nx validate --timeout 120
+
+# RUNNING TESTS (no Siemens NX required):
+NX_MCP_USE_MOCK_NXOPEN=1 pytest tests/
+
+# On Windows PowerShell:
+$env:NX_MCP_USE_MOCK_NXOPEN = "1"
+pytest tests/
+
+# Note: conftest.py automatically sets NX_MCP_USE_MOCK_NXOPEN=1 for all tests,
+# so you can simply run:
+pytest tests/
+
+
+================================================================================
+10. ERROR HANDLING & LOGGING
+================================================================================
+
+10.1 MCP-Level Error Handling (server.py)
+------------------------------------------
+JSON-RPC error responses use standard codes:
+  - -32700: Parse error (invalid JSON from client)
+  - -32601: Method not found (unknown MCP method or unknown tool name)
+  - -32602: Invalid params (TypeError when calling tool with wrong arguments)
+  - -32603: Internal error (any unhandled exception during tool execution)
+
+Format: {"jsonrpc": "2.0", "id": ..., "error": {"code": -NNNNN, "message": "..."}}
+
+10.2 Tool-Level Error Handling
+-------------------------------
+Every tool function is wrapped in try/except Exception:
+  - Success: Returns ToolResult(message)
+  - Failure: Returns ToolError(str(exception))
+  - ToolResult.__str__() -> "OK: {message}"
+  - ToolError.__str__() -> "ERROR: {error}"
+
+Input validation occurs before NX calls:
+  - Size/radius/dimension must be positive (> 0)
+  - Pattern count must be >= 2
+  - Pattern pitch must be non-zero
+  - View name must be in valid set
+  - Zero-length vectors rejected in measure_angle
+
+10.3 Bridge-Level Error Handling (bridge/nx_bridge.py)
+-------------------------------------------------------
+  - handle_line() catches all exceptions and returns:
+    {"ok": false, "error": "...", "traceback": "..."}
+  - Individual tool functions return {"ok": false, "error": "..."} for validation failures
+  - SelectionError is raised for body/feature/edge resolution failures
+  - NXBridgeError is raised when run_journal.exe cannot be found
+
+10.4 Bridge Process Error Handling (bridge/runner.py)
+------------------------------------------------------
+  - If subprocess stdin/stdout fails: returns {"ok": false, "error": str(exc)}
+  - If bridge process exits unexpectedly: returns {"ok": false, "error": stderr or "NX bridge process exited"}
+  - If bridge returns invalid JSON: returns {"ok": false, "error": "Invalid bridge result JSON: ..."}
+  - NXBridgeProcess.reset(): terminates/kills child process with timeout
+
+10.5 Logging Setup
+-------------------
+  - logging.basicConfig(level=logging.DEBUG, stream=sys.stderr,
+                         format="[nx-mcp] %(levelname)s %(message)s")
+  - Logger name: "nx-mcp"
+  - All log output goes to stderr (so it doesn't interfere with JSON-RPC on stdout)
+  - Logs on startup: "NX MCP started — {N} tools"
+  - Logs each request method: "→ {method}"
+  - Mock NXOpen prints "[MOCK] ..." messages to stdout (debugging aid)
+
+
+================================================================================
+11. KNOWN LIMITATIONS / ASSUMPTIONS
+================================================================================
+
+11.1 Hardcoded Values
+----------------------
+- NX version path: "C:\Program Files\Siemens\NX2206" (in multiple files)
+- Default run_journal.exe path: "C:\Program Files\Siemens\NX2206\NXBIN\run_journal.exe"
+- User-specific paths in helper scripts: "C:\Users\HP\nx-mcp"
+- Screenshot resolution: hardcoded 1920x1080
+- MCP protocol version: "2024-11-05"
+- Server version: "0.1.0"
+- Chamfer angle: always 45 degrees
+- Chamfer/fillet tolerance: 0.01
+- Section creation tolerances: 0.0095, 0.01, 0.5
+- Extrude direction: always Z-axis (in bridge extrude)
+- Default NX part units: always Millimeters
+- PYTHONPATH in .claude config: "C:\projects\nx_mcp\src" (incorrect relative to actual location)
+
+11.2 Assumptions About the Environment
+----------------------------------------
+- Windows OS (paths use backslashes, .exe executables, .cmd/.ps1 scripts)
+- Siemens NX 2206 is installed at the default path
+- Only one NX session should be running at a time (see aaa.txt)
+- run_journal.exe is available and functional
+- The NX Python environment can import NXOpen
+- Work part is always in Millimeters
+
+11.3 Functional Limitations (from codebase analysis + aaa.txt)
+---------------------------------------------------------------
+- Assembly tools are placeholder-level (don't actually position or constrain)
+- export_step and export_stl don't use bridge mode (require MCP process in NX Python)
+- draw_line and draw_arc don't use bridge mode
+- measure tools are pure math, not NX measurements
+- get_bounding_box is a placeholder (returns part reference, not coordinates)
+- Sketch creation doesn't create real NX Sketch objects (just sets plane reference)
+- No undo mark management around operations
+- No builder cleanup guarantees on partial failure
+- Body/feature resolution is name-based and can be fragile
+- Complex organic/freeform shapes not supported
+- draw_cylinder_profile is in bridge but not exposed as MCP tool
+- No support for NX expressions/variables
+- No support for NX drawing/drafting
+- Edge selection heuristics (vertical/top/bottom) work by Z-coordinate analysis
+  and may not work for arbitrarily oriented bodies
+- fastapi and uvicorn are imported but not declared as dependencies
+
+11.4 Test Coverage Notes
+--------------------------
+- 38+ test functions in test_tools.py covering all registered tools
+- Tests run with mock NXOpen (no real NX needed)
+- Tests verify return types (ToolResult/ToolError) and message content
+- Bridge routing test verifies mock calls are forwarded correctly
+- Input validation tests verify rejection of invalid parameters
+- test_nx_bridge.py tests the CLI bridge module (find_run_journal, run_journal)
+
+
+================================================================================
+12. REBUILD GUIDE (Step-by-Step)
+================================================================================
+
+If you had to recreate this entire codebase from scratch using only this
+document, follow these steps in order:
+
+STEP 1: CREATE PROJECT STRUCTURE
+----------------------------------
+mkdir nx-mcp
+cd nx-mcp
+mkdir -p src/nx_mcp/bridge
+mkdir -p src/nx_mcp/tools
+mkdir -p src/nx_mcp/journals
+mkdir -p src/nx_mcp/testing
+mkdir -p src/nx_mcp/utils
+mkdir tests
+
+STEP 2: CREATE pyproject.toml
+-------------------------------
+Create pyproject.toml with:
+- [build-system] using setuptools
+- [project] name="nx-mcp", version="0.1.0", requires-python=">=3.10"
+- Empty dependencies list
+- [project.optional-dependencies] dev = ["pytest"]
+- [project.scripts]:
+    nx-mcp = "nx_mcp.server:main"
+    nx-mcp-http = "nx_mcp.http_server:main"
+    nx-mcp-nx = "nx_mcp.nx_bridge:main"
+- [tool.setuptools.packages.find] where = ["src"]
+
+STEP 3: CREATE RESPONSE TYPES (src/nx_mcp/response.py)
+--------------------------------------------------------
+- Define ToolResult dataclass with message field, __str__ returning "OK: {message}"
+- Define ToolError dataclass with error field, __str__ returning "ERROR: {error}"
+- Both have is_ok() method (True for Result, False for Error)
+
+STEP 4: CREATE NXOpen LOADER (src/nx_mcp/nxopen_loader.py)
+------------------------------------------------------------
+- Define NXOpenUnavailable exception class
+- Define load_nxopen() function:
+  - If NX_MCP_USE_MOCK_NXOPEN=1: import nx_mcp.testing.mock_nxopen
+  - Else: try import NXOpen; on failure raise NXOpenUnavailable
+
+STEP 5: CREATE NX SESSION WRAPPER (src/nx_mcp/nx_session.py)
+--------------------------------------------------------------
+- Define NXSession class with classmethods:
+  - reset(): clear _instance and _nxopen
+  - nxopen(): lazy-load NXOpen module via load_nxopen()
+  - get(): lazy-get NXOpen.Session.GetSession()
+  - work_part(): return cls.get().Parts.Work
+  - ui(): return cls.nxopen().UI.GetUI()
+
+STEP 6: CREATE MOCK NXOpen (src/nx_mcp/testing/mock_nxopen.py)
+----------------------------------------------------------------
+- Define stub classes: Part.Units, Features.BooleanBuilder.BooleanType,
+  Features.EdgeBlendBuilder, BasePart, Assemblies
+- Define mock classes: _View (Fit/Orient/SaveImage), _ModelingViews, _UI, _DexManager,
+  _FeaturesCollection (all Create*Builder methods), _SketchCollection,
+  _PartsCollection (NewDisplay/Open/Work), _WorkPart, _Session (GetSession singleton)
+- Define Point3d(x,y,z) and Vector3d(x,y,z) classes
+
+STEP 7: CREATE TOOL REGISTRY (src/nx_mcp/tools/registry.py)
+--------------------------------------------------------------
+- Global _registry dict
+- @mcp_tool(name, description) decorator that registers fn
+- _get_schema(fn): auto-generates JSON Schema from function signature
+- ToolRegistry class with all(), get(), list_tools() static methods
+
+STEP 8: CREATE TOOL MODULES
+-----------------------------
+Create each tool module (file_ops.py, sketch.py, modeling.py, assembly.py,
+measure.py, utility.py) with:
+- Import registry.mcp_tool, NXSession, ToolResult, ToolError
+- For bridge-enabled tools: import bridge.runner, define _use_mock_nxopen(), _bridge_result()
+- Register each tool with @mcp_tool decorator
+- Implement each function per the TOOLS section above (Section 5)
+
+STEP 9: CREATE BRIDGE RUNNER (src/nx_mcp/bridge/runner.py)
+------------------------------------------------------------
+- DEFAULT_RUN_JOURNAL path constant
+- _bridge_script_path() using importlib.resources
+- NXBridgeProcess class:
+  - Thread-locked subprocess management
+  - _start(): spawn run_journal.exe with bridge script
+  - _ensure_started(): auto-start if needed
+  - call(tool, args): write JSON to stdin, read JSON from stdout
+  - reset(): terminate/kill child process
+- Module-level convenience functions: call_nx(), reset_nx_bridge(), run_tool()
+
+STEP 10: CREATE BRIDGE NX SCRIPT (src/nx_mcp/bridge/nx_bridge.py)
+-------------------------------------------------------------------
+This is the largest file (1129 lines). Implement:
+- Direct NXOpen imports at top level
+- State management (_state dict, _remember_feature, _remember_body)
+- Helper functions: _ensure_work_part, _feature_name, _body_name,
+  _resolve_feature, _resolve_body, _resolve_edges, _direction_vector,
+  _plane_normal, _point_on_active_plane, _body_bounds, _edge_midpoint,
+  _edge_z_range, _set_collector_rules, _create_direction, _create_axis
+- All tool implementation functions using real NXOpen API
+- dispatch(command) function mapping tool names to functions
+- handle_line() with exception handling
+- main() stdin/stdout JSON loop
+
+STEP 11: CREATE CLI BRIDGE MODULE (src/nx_mcp/nx_bridge.py)
+-------------------------------------------------------------
+- NXBridgeError exception
+- JournalResult dataclass (returncode, stdout, stderr, ok property)
+- find_run_journal(): search for run_journal.exe using UGII_BASE_DIR
+- packaged_journal(): locate journal scripts via importlib.resources
+- run_journal(): run a journal script via subprocess
+- validate_nxopen(): run validate_nxopen.py journal
+- main(): argparse CLI with "validate" command
+
+STEP 12: CREATE MCP SERVER (src/nx_mcp/server.py)
+----------------------------------------------------
+- Import all tool modules (triggers registration)
+- Configure logging to stderr
+- Define ok(id, result) and err(id, code, msg) JSON-RPC helpers
+- handle(req) function:
+  - "initialize" -> return protocol version, capabilities, server info
+  - "notifications/initialized" -> return None (no response)
+  - "tools/list" -> return ToolRegistry.list_tools()
+  - "tools/call" -> dispatch to registered tool function
+- main(): read stdin line by line, parse JSON, call handle(), write response
+
+STEP 13: CREATE HTTP SERVER (src/nx_mcp/http_server.py)
+---------------------------------------------------------
+- Import FastAPI, uvicorn, handle from server
+- POST /mcp endpoint
+- main(): uvicorn.run on 127.0.0.1:8765
+
+STEP 14: CREATE JOURNAL SCRIPTS (src/nx_mcp/journals/*.py)
+-------------------------------------------------------------
+Create each journal script that runs standalone inside NX via run_journal.exe.
+Each script follows the pattern:
+1. Parse command-line args for output path and parameters
+2. Get NXOpen.Session.GetSession()
+3. Create new part with NewDisplay()
+4. Build geometry using NXOpen builders
+5. Fit view, save part, print result message
+
+STEP 15: CREATE UTILITY MODULES
+----------------------------------
+- src/nx_mcp/utils/geometry.py: make_point, make_vector, plane_normal helpers
+- src/nx_mcp/journals/__init__.py: docstring
+- src/nx_mcp/testing/__init__.py: docstring
+- All __init__.py files (empty or with docstrings)
+
+STEP 16: CREATE TESTS
+-----------------------
+- tests/conftest.py: auto-fixture that sets NX_MCP_USE_MOCK_NXOPEN=1 and resets NXSession
+- tests/test_tools.py: test every registered tool returns correct type
+- tests/test_nx_bridge.py: test find_run_journal and run_journal functions
+
+STEP 17: CREATE HELPER SCRIPTS
+---------------------------------
+- .env.example with NX_RUN_JOURNAL path
+- .claude/settings.local.json for Claude MCP client config
+- nx_result_watcher.ps1: PowerShell file watcher for auto-opening .prt files
+- start_nx_result_watcher.cmd: launcher for the watcher
+- open_current_nx_result.cmd: manual .prt opener
+- open_latest_nx_result.vbs: VBScript .prt opener
+
+STEP 18: INSTALL AND TEST
+----------------------------
+pip install -e ".[dev]"
+pytest tests/
+# All 38+ tests should pass
+
+STEP 19: CONFIGURE MCP CLIENT
+-------------------------------
+Configure your MCP client (Claude, etc.) to connect to this server using:
+  Command: C:\Program Files\Siemens\NX2206\NXBIN\python.exe
+  Args: ["-m", "nx_mcp.server"]
+  Env: UGII_BASE_DIR=C:\Program Files\Siemens\NX2206
+       PYTHONPATH=<path_to_project>/src
+
+STEP 20: VERIFY WITH SIEMENS NX
+---------------------------------
+1. Run: nx-mcp-nx validate
+2. If successful, NX is accessible and the bridge can create real geometry
+3. Try creating a simple part through the MCP client
+
+
+================================================================================
+END OF DOCUMENTATION
+================================================================================
