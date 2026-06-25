@@ -26,9 +26,16 @@ def create_sketch(plane: str = "XY"):
         return ToolError(str(e))
 
 
-@mcp_tool("draw_line", "Draw a line from x1 y1 to x2 y2")
+@mcp_tool("draw_line", "Draw a line from x1 y1 to x2 y2. Curves drawn accumulate in the active sketch profile.")
 def draw_line(x1: float, y1: float, x2: float, y2: float):
     try:
+        if not _use_mock_nxopen():
+            return _bridge_result(
+                runner.call_nx(
+                    "draw_line",
+                    {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
+                )
+            )
         nxopen = NXSession.nxopen()
         part = NXSession.work_part()
         part.Curves.CreateLine(nxopen.Point3d(x1, y1, 0.0), nxopen.Point3d(x2, y2, 0.0))
@@ -37,7 +44,7 @@ def draw_line(x1: float, y1: float, x2: float, y2: float):
         return ToolError(str(e))
 
 
-@mcp_tool("draw_rectangle", "Draw rectangle from corner x y with width and height")
+@mcp_tool("draw_rectangle", "Draw rectangle from corner x y with width and height. Curves drawn accumulate in the active sketch profile.")
 def draw_rectangle(x: float, y: float, width: float, height: float):
     try:
         if not _use_mock_nxopen():
@@ -60,7 +67,7 @@ def draw_rectangle(x: float, y: float, width: float, height: float):
         return ToolError(str(e))
 
 
-@mcp_tool("draw_circle", "Draw circle at cx cy with radius")
+@mcp_tool("draw_circle", "Draw circle at cx cy with radius. Curves drawn accumulate in the active sketch profile.")
 def draw_circle(cx: float, cy: float, radius: float):
     try:
         if not _use_mock_nxopen():
@@ -78,9 +85,22 @@ def draw_circle(cx: float, cy: float, radius: float):
         return ToolError(str(e))
 
 
-@mcp_tool("draw_arc", "Draw arc at cx cy with radius from start_angle to end_angle degrees")
+@mcp_tool("draw_arc", "Draw arc at cx cy with radius from start_angle to end_angle degrees. Curves drawn accumulate in the active sketch profile.")
 def draw_arc(cx: float, cy: float, radius: float, start_angle: float, end_angle: float):
     try:
+        if not _use_mock_nxopen():
+            return _bridge_result(
+                runner.call_nx(
+                    "draw_arc",
+                    {
+                        "cx": cx,
+                        "cy": cy,
+                        "radius": radius,
+                        "start_angle": start_angle,
+                        "end_angle": end_angle,
+                    },
+                )
+            )
         import math
         nxopen = NXSession.nxopen()
         part = NXSession.work_part()

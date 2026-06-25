@@ -9,13 +9,20 @@ def test_tools_registered():
     assert len(ToolRegistry.list_tools()) >= 20
 
 def test_create_part():
-    assert isinstance(file_ops.create_part("test.prt"), ToolResult)
+    r = file_ops.create_part("test.prt")
+    assert isinstance(r, ToolResult)
+    assert "open_current_nx_result.cmd" in r.message
 
 def test_open_part():
-    assert isinstance(file_ops.open_part("test.prt"), ToolResult)
+    r = file_ops.open_part("test.prt")
+    assert isinstance(r, ToolResult)
+    assert "open_current_nx_result.cmd" in r.message
 
 def test_save_part():
-    assert isinstance(file_ops.save_part(), ToolResult)
+    file_ops.create_part("test.prt")
+    r = file_ops.save_part()
+    assert isinstance(r, ToolResult)
+    assert "open_current_nx_result.cmd" in r.message
 
 def test_export_step():
     r = file_ops.export_step("out.stp")
@@ -128,7 +135,7 @@ def test_advanced_modeling_tools_route_to_bridge(monkeypatch):
                 "diameter": 4.0,
                 "depth": 10.0,
                 "target": "last",
-                "direction": "-Z",
+                "direction": "auto",
                 "placement_face": "top",
             },
         ),
@@ -188,3 +195,66 @@ def test_take_screenshot():
 
 def test_list_features():
     assert isinstance(utility.list_features(), ToolResult)
+
+def test_sketch_tools_route_to_bridge(monkeypatch):
+    monkeypatch.delenv("NX_MCP_USE_MOCK_NXOPEN", raising=False)
+    calls = []
+
+    def fake_call_nx(tool, args):
+        calls.append((tool, args))
+        return {"ok": True, "message": f"bridge {tool}"}
+
+    monkeypatch.setattr(sketch.runner, "call_nx", fake_call_nx)
+
+    assert sketch.draw_line(0, 0, 10, 20).message == "bridge draw_line"
+    assert sketch.draw_arc(5, 5, 10, 0, 90).message == "bridge draw_arc"
+
+    assert calls == [
+        ("draw_line", {"x1": 0, "y1": 0, "x2": 10, "y2": 20}),
+        ("draw_arc", {"cx": 5, "cy": 5, "radius": 10, "start_angle": 0, "end_angle": 90}),
+    ]
+
+def test_new_modeling_tools_route_to_bridge(monkeypatch):
+    monkeypatch.delenv("NX_MCP_USE_MOCK_NXOPEN", raising=False)
+    calls = []
+
+    def fake_call_nx(tool, args):
+        calls.append((tool, args))
+        return {"ok": True, "message": f"bridge {tool}"}
+
+    monkeypatch.setattr(modeling.runner, "call_nx", fake_call_nx)
+
+    assert modeling.create_real_sketch("XZ").message == "bridge create_real_sketch"
+    assert modeling.extrude_from_sketch(15.0, "sketch_1", 2.0, "Y").message == "bridge extrude_from_sketch"
+    assert modeling.add_hole_nx(1.0, 2.0, 3.0, 8.0, 12.0, "body_1", "-Z", "simple").message == "bridge add_hole_nx"
+    assert modeling.create_rib(6.0, "X", "body_2", True).message == "bridge create_rib"
+    assert modeling.pattern_circular("feat_1", "Y", 6, 180.0).message == "bridge pattern_circular"
+    assert modeling.edge_blend(4.0, "body_3", "top_edges").message == "bridge edge_blend"
+    assert modeling.chamfer(1.5, "body_4", "bottom_edges").message == "bridge chamfer_edges"
+    assert modeling.revolve_cut("X", 90.0, "body_5").message == "bridge revolve_cut"
+    assert modeling.extrude_cut(25.0, 5.0, "body_6", "Y").message == "bridge extrude_cut"
+    assert modeling.mirror_body_feature("feat_2", "YZ").message == "bridge mirror_feature"
+
+    assert calls == [
+        ("create_real_sketch", {"plane": "XZ"}),
+        ("extrude_from_sketch", {"sketch_name": "sketch_1", "distance": 15.0, "start": 2.0, "direction": "Y"}),
+        ("add_hole_nx", {"x": 1.0, "y": 2.0, "z": 3.0, "diameter": 8.0, "depth": 12.0, "target": "body_1", "direction": "-Z", "hole_type": "simple"}),
+        ("create_rib", {"thickness": 6.0, "direction": "X", "body": "body_2", "flip": True}),
+        ("pattern_circular", {"feature_name": "feat_1", "axis": "Y", "count": 6, "angle_total": 180.0}),
+        ("edge_blend", {"radius": 4.0, "body": "body_3", "edges": "top_edges"}),
+        ("chamfer_edges", {"offset": 1.5, "body": "body_4", "edges": "bottom_edges"}),
+        ("revolve_cut", {"axis": "X", "angle_deg": 90.0, "target": "body_5"}),
+        ("extrude_cut", {"distance": 25.0, "start": 5.0, "target": "body_6", "direction": "Y"}),
+        ("mirror_feature", {"feature_name": "feat_2", "plane": "YZ"}),
+    ]
+
+def test_new_modeling_validation():
+    assert isinstance(modeling.extrude_from_sketch(-5.0), ToolError)
+    assert isinstance(modeling.add_hole_nx(0, 0, 0, -1, 10), ToolError)
+    assert isinstance(modeling.add_hole_nx(0, 0, 0, 10, -5), ToolError)
+    assert isinstance(modeling.create_rib(-2.0), ToolError)
+    assert isinstance(modeling.pattern_circular("feat", "Z", 1, 360), ToolError)
+    assert isinstance(modeling.pattern_circular("feat", "Z", 4, 0), ToolError)
+    assert isinstance(modeling.edge_blend(-1.0), ToolError)
+    assert isinstance(modeling.chamfer(-0.5), ToolError)
+    assert isinstance(modeling.extrude_cut(-10.0), ToolError)

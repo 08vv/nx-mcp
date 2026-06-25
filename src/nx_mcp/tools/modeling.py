@@ -118,7 +118,7 @@ def create_cylinder(
         return ToolError(str(e))
 
 
-@mcp_tool("extrude", "Extrude active sketch by distance mm")
+@mcp_tool("extrude", "Extrude active sketch curves by distance mm. Extrudes perpendicular to active sketch plane.")
 def extrude(distance: float, start: float = 0.0):
     try:
         if not _use_mock_nxopen():
@@ -135,12 +135,14 @@ def extrude(distance: float, start: float = 0.0):
         return ToolError(str(e))
 
 
-@mcp_tool("revolve", "Revolve active sketch around axis by angle_deg")
-def revolve(axis: str = "Z", angle_deg: float = 360.0):
+@mcp_tool("revolve", "Revolve active sketch around axis by angle_deg. Axis defaults to 'auto' which resolves to sketch plane vertical direction.")
+def revolve(axis: str = "auto", angle_deg: float = 360.0):
     try:
         if not _use_mock_nxopen():
             return _bridge_result(
-                runner.call_nx("revolve", {"axis": axis, "angle_deg": angle_deg})
+                runner.call_nx(
+                    "revolve", {"axis": axis, "angle_deg": angle_deg}
+                )
             )
         b = NXSession.work_part().Features.CreateRevolveBuilder(None)
         b.Limits.EndExtend.Value.RightHandSide = str(angle_deg)
@@ -185,7 +187,7 @@ def boolean_subtract(target: str, tool: str):
         return ToolError(str(e))
 
 
-@mcp_tool("add_fillet", "Add edge fillet with radius mm to edges such as outer_edges vertical_edges top_edges bottom_edges")
+@mcp_tool("add_fillet", "Add edge fillet with radius mm to edges (e.g., outer_edges, vertical_edges, top_edges, bottom_edges, x_aligned_edges, y_aligned_edges, z_aligned_edges, min_z_edges, max_z_edges)")
 def add_fillet(radius: float, body: str = "last", edges: str = "outer_edges"):
     try:
         if radius <= 0:
@@ -206,7 +208,7 @@ def add_fillet(radius: float, body: str = "last", edges: str = "outer_edges"):
         return ToolError(str(e))
 
 
-@mcp_tool("add_chamfer", "Add chamfer with offset mm to edges such as outer_edges vertical_edges top_edges bottom_edges")
+@mcp_tool("add_chamfer", "Add chamfer with offset mm to edges (e.g., outer_edges, vertical_edges, top_edges, bottom_edges, x_aligned_edges, y_aligned_edges, z_aligned_edges, min_z_edges, max_z_edges)")
 def add_chamfer(offset: float, body: str = "last", edges: str = "outer_edges"):
     try:
         if offset <= 0:
@@ -227,7 +229,7 @@ def add_chamfer(offset: float, body: str = "last", edges: str = "outer_edges"):
         return ToolError(str(e))
 
 
-@mcp_tool("add_hole", "Add hole at x y z with diameter and depth in mm on a target body")
+@mcp_tool("add_hole", "Add hole at x y z with diameter and depth in mm on a target body. Direction 'auto' drills into active sketch plane.")
 def add_hole(
     x: float,
     y: float,
@@ -235,7 +237,7 @@ def add_hole(
     diameter: float,
     depth: float,
     target: str = "last",
-    direction: str = "-Z",
+    direction: str = "auto",
     placement_face: str = "top",
 ):
     try:
@@ -329,5 +331,261 @@ def edit_expression(name: str, value: str):
                 )
             )
         return ToolResult(f"Expression '{name}' updated to '{value}'")
+    except Exception as e:
+        return ToolError(str(e))
+
+
+# ---------------------------------------------------------------------------
+# NEW TOOLS (10)
+# ---------------------------------------------------------------------------
+
+
+@mcp_tool(
+    "create_real_sketch",
+    "Create a proper constrained NX Sketch object on a plane (XY/XZ/YZ) and make it active for drawing",
+)
+def create_real_sketch(plane: str = "XY"):
+    try:
+        if not _use_mock_nxopen():
+            return _bridge_result(
+                runner.call_nx("create_real_sketch", {"plane": plane})
+            )
+        return ToolResult(f"Sketch created on {plane} plane")
+    except Exception as e:
+        return ToolError(str(e))
+
+
+@mcp_tool(
+    "extrude_from_sketch",
+    "Extrude a named sketch profile by distance mm along direction. Direction 'auto' extrudes normal to sketch plane.",
+)
+def extrude_from_sketch(
+    distance: float,
+    sketch_name: str = "last",
+    start: float = 0.0,
+    direction: str = "auto",
+):
+    try:
+        if distance <= 0:
+            return ToolError("Extrude distance must be positive")
+        if not _use_mock_nxopen():
+            return _bridge_result(
+                runner.call_nx(
+                    "extrude_from_sketch",
+                    {
+                        "sketch_name": sketch_name,
+                        "distance": distance,
+                        "start": start,
+                        "direction": direction,
+                    },
+                )
+            )
+        return ToolResult(f"Extruded sketch '{sketch_name}' {distance}mm along {direction}")
+    except Exception as e:
+        return ToolError(str(e))
+
+
+@mcp_tool(
+    "add_hole_nx",
+    "Proper NX Hole Builder: create a simple hole at x y z with diameter and depth. Direction 'auto' drills into active sketch plane.",
+)
+def add_hole_nx(
+    x: float,
+    y: float,
+    z: float,
+    diameter: float,
+    depth: float,
+    target: str = "last",
+    direction: str = "auto",
+    hole_type: str = "simple",
+):
+    try:
+        if diameter <= 0 or depth <= 0:
+            return ToolError("Hole diameter and depth must be positive")
+        if not _use_mock_nxopen():
+            return _bridge_result(
+                runner.call_nx(
+                    "add_hole_nx",
+                    {
+                        "x": x,
+                        "y": y,
+                        "z": z,
+                        "diameter": diameter,
+                        "depth": depth,
+                        "target": target,
+                        "direction": direction,
+                        "hole_type": hole_type,
+                    },
+                )
+            )
+        return ToolResult(f"Hole D={diameter} depth={depth} at ({x},{y},{z})")
+    except Exception as e:
+        return ToolError(str(e))
+
+
+@mcp_tool(
+    "create_rib",
+    "Create a rib/web feature from the active sketch profile with a given thickness mm. Direction 'auto' is perpendicular to rib profile plane.",
+)
+def create_rib(
+    thickness: float,
+    direction: str = "auto",
+    body: str = "last",
+    flip: bool = False,
+):
+    try:
+        if thickness <= 0:
+            return ToolError("Rib thickness must be positive")
+        if not _use_mock_nxopen():
+            return _bridge_result(
+                runner.call_nx(
+                    "create_rib",
+                    {
+                        "thickness": thickness,
+                        "direction": direction,
+                        "body": body,
+                        "flip": flip,
+                    },
+                )
+            )
+        return ToolResult(f"Rib T={thickness}mm along {direction}")
+    except Exception as e:
+        return ToolError(str(e))
+
+
+@mcp_tool(
+    "pattern_circular",
+    "Circular pattern of a feature: count instances evenly spaced over angle_total degrees about axis. Axis 'auto' is normal to active sketch plane.",
+)
+def pattern_circular(
+    feature_name: str,
+    axis: str = "auto",
+    count: int = 4,
+    angle_total: float = 360.0,
+):
+    try:
+        if count < 2:
+            return ToolError("Circular pattern count must be at least 2")
+        if angle_total == 0:
+            return ToolError("angle_total must be non-zero")
+        if not _use_mock_nxopen():
+            return _bridge_result(
+                runner.call_nx(
+                    "pattern_circular",
+                    {
+                        "feature_name": feature_name,
+                        "axis": axis,
+                        "count": count,
+                        "angle_total": angle_total,
+                    },
+                )
+            )
+        return ToolResult(f"Circular pattern '{feature_name}' {count}x over {angle_total}° about {axis}")
+    except Exception as e:
+        return ToolError(str(e))
+
+
+@mcp_tool(
+    "edge_blend",
+    "Fillet edges by selection with a given radius mm (uses outer_edges/vertical_edges/top_edges/bottom_edges/x_aligned_edges/y_aligned_edges/z_aligned_edges/min_z_edges/max_z_edges hints)",
+)
+def edge_blend(radius: float, body: str = "last", edges: str = "outer_edges"):
+    try:
+        if radius <= 0:
+            return ToolError("Edge blend radius must be positive")
+        if not _use_mock_nxopen():
+            return _bridge_result(
+                runner.call_nx(
+                    "edge_blend",
+                    {"radius": radius, "body": body, "edges": edges},
+                )
+            )
+        return ToolResult(f"Edge blend R{radius}mm on {edges}")
+    except Exception as e:
+        return ToolError(str(e))
+
+
+@mcp_tool(
+    "chamfer",
+    "Chamfer edges by selection with a given offset mm (uses outer_edges/vertical_edges/top_edges/bottom_edges/x_aligned_edges/y_aligned_edges/z_aligned_edges/min_z_edges/max_z_edges hints)",
+)
+def chamfer(offset: float, body: str = "last", edges: str = "outer_edges"):
+    try:
+        if offset <= 0:
+            return ToolError("Chamfer offset must be positive")
+        if not _use_mock_nxopen():
+            return _bridge_result(
+                runner.call_nx(
+                    "chamfer_edges",
+                    {"offset": offset, "body": body, "edges": edges},
+                )
+            )
+        return ToolResult(f"Chamfer {offset}mm on {edges}")
+    except Exception as e:
+        return ToolError(str(e))
+
+
+@mcp_tool(
+    "revolve_cut",
+    "Revolve the active sketch profile around axis by angle_deg to cut/remove material from target body. Axis 'auto' is sketch plane vertical direction.",
+)
+def revolve_cut(axis: str = "auto", angle_deg: float = 360.0, target: str = "last"):
+    try:
+        if not _use_mock_nxopen():
+            return _bridge_result(
+                runner.call_nx(
+                    "revolve_cut",
+                    {"axis": axis, "angle_deg": angle_deg, "target": target},
+                )
+            )
+        return ToolResult(f"Revolve-cut {angle_deg}° about {axis}")
+    except Exception as e:
+        return ToolError(str(e))
+
+
+@mcp_tool(
+    "extrude_cut",
+    "Extrude the active sketch profile by distance mm to cut/remove material from an existing body. Direction 'auto' extrudes normal to sketch plane.",
+)
+def extrude_cut(
+    distance: float,
+    start: float = 0.0,
+    target: str = "last",
+    direction: str = "auto",
+):
+    try:
+        if distance <= 0:
+            return ToolError("Extrude-cut distance must be positive")
+        if not _use_mock_nxopen():
+            return _bridge_result(
+                runner.call_nx(
+                    "extrude_cut",
+                    {
+                        "distance": distance,
+                        "start": start,
+                        "target": target,
+                        "direction": direction,
+                    },
+                )
+            )
+        return ToolResult(f"Extrude-cut {distance}mm from '{target}' along {direction}")
+    except Exception as e:
+        return ToolError(str(e))
+
+
+@mcp_tool(
+    "mirror_body_feature",
+    "Mirror a feature about a plane (XY/XZ/YZ) — same as mirror_feature but with intent-specific name",
+)
+def mirror_body_feature(feature_name: str, plane: str = "XZ"):
+    try:
+        if not _use_mock_nxopen():
+            return _bridge_result(
+                runner.call_nx(
+                    "mirror_feature",
+                    {"feature_name": feature_name, "plane": plane},
+                )
+            )
+        return ToolResult(f"Mirrored '{feature_name}' about {plane}")
     except Exception as e:
         return ToolError(str(e))

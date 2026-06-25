@@ -122,10 +122,12 @@ class _PartsCollection:
 
     def NewDisplay(self, filename, units):
         print(f"[MOCK] NewDisplay {filename}")
+        self._work.FullPath = filename
         return MagicMock()
 
     def Open(self, filename):
         print(f"[MOCK] Open {filename}")
+        self._work.FullPath = filename
         return MagicMock()
 
     @property
@@ -140,6 +142,7 @@ class _WorkPart:
         self.Curves = MagicMock()
         self.AssemblyManager = MagicMock()
         self.ComponentAssembly = MagicMock()
+        self.FullPath = ""
 
     def Save(self):
         print("[MOCK] Save")

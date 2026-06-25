@@ -12,6 +12,27 @@ LIVE_PORT = 43210
 CONFIG_PATH = Path("C:/Users/HP/nx-mcp/live_bridge_config.json")
 
 
+def _update_watcher_files(filepath):
+    try:
+        abs_path = str(Path(filepath).resolve())
+        root = Path("C:/Users/HP/nx-mcp")
+        if root.exists():
+            latest_txt = root / "latest_nx_result.txt"
+            latest_txt.write_text(abs_path, encoding="utf-8")
+            cmd_path = root / "open_current_nx_result.cmd"
+            cmd_path.write_text(
+                f'@echo off\nstart "" "C:\\Program Files\\Siemens\\NX2206\\NXBIN\\ugs_router.exe" -ug -use_file_dir "{abs_path}"\n',
+                encoding="utf-8"
+            )
+            vbs_path = root / "open_latest_nx_result.vbs"
+            vbs_path.write_text(
+                f'Set shell = CreateObject("WScript.Shell")\nshell.Run """C:\\Program Files\\Siemens\\NX2206\\NXBIN\\ugs_router.exe"" -ug -use_file_dir ""{abs_path}""", 0, False\n',
+                encoding="utf-8"
+            )
+    except Exception:
+        pass
+
+
 def _bridge_script_path():
     return Path(resources.files("nx_mcp.bridge").joinpath("nx_bridge.py"))
 
@@ -179,7 +200,12 @@ class NXBridgeProcess:
                 
                 if "\n" in buffer:
                     line, _ = buffer.split("\n", 1)
-                    return json.loads(line)
+                    res = json.loads(line)
+                    if res.get("ok"):
+                        p = args.get("filename") if tool == "create_part" else (args.get("filepath") if tool == "open_part" else res.get("filepath"))
+                        if p:
+                            _update_watcher_files(p)
+                    return res
             except Exception as e:
                 return {"ok": False, "error": f"Socket communication error: {e}"}
             finally:
@@ -203,11 +229,12 @@ class NXBridgeProcess:
 
             try:
                 result = json.loads(line)
-                # If a part was created or opened successfully in batch, open it in GUI too
-                if result.get("ok") and tool in ("create_part", "open_part") and part_path:
-                    # ugraf.exe <filepath> opens the interactive NX GUI with the file pre-loaded
-                    _, ugraf_path, _ = verify_nx_environment()
-                    subprocess.Popen([str(ugraf_path), str(Path(part_path).resolve())])
+                if result.get("ok"):
+                    p = args.get("filename") if tool == "create_part" else (args.get("filepath") if tool == "open_part" else result.get("filepath"))
+                    if p:
+                        _update_watcher_files(p)
+                        _, _, ugs_router = verify_nx_environment()
+                        subprocess.Popen([str(ugs_router), "-ug", "-use_file_dir", str(Path(p).resolve())])
                 return result
             except json.JSONDecodeError as exc:
                 return {"ok": False, "error": f"Invalid bridge result JSON: {exc}"}
