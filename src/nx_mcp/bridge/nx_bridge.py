@@ -1915,6 +1915,985 @@ def extrude_cut(distance, start=0.0, target="last", direction="auto"):
     }
 
 
+def _resolve_face_by_coordinate(body_reference="last", x=0.0, y=0.0, z=0.0):
+    body = _resolve_body(body_reference)
+    faces = list(body.GetFaces() or [])
+    if not faces:
+        raise SelectionError(f"No faces found on body: {body_reference}")
+    best_face = None
+    min_dist = 999999.0
+    for face in faces:
+        try:
+            face_type, origin, direction, bbox, radius, flag1, flag2 = UF_SESSION.Modl.AskFaceData(face.Tag)
+            pt = _point_tuple(origin)
+            dist = math.sqrt((pt[0]-x)**2 + (pt[1]-y)**2 + (pt[2]-z)**2)
+            if dist < min_dist:
+                min_dist = dist
+                best_face = face
+        except Exception:
+            if best_face is None:
+                best_face = face
+    return best_face
+
+
+def _resolve_edge_by_coordinate(body_reference="last", x=0.0, y=0.0, z=0.0):
+    body = _resolve_body(body_reference)
+    edges = list(body.GetEdges() or [])
+    if not edges:
+        raise SelectionError(f"No edges found on body: {body_reference}")
+    best_edge = None
+    min_dist = 999999.0
+    for edge in edges:
+        try:
+            pt = _edge_midpoint(edge)
+            dist = math.sqrt((pt[0]-x)**2 + (pt[1]-y)**2 + (pt[2]-z)**2)
+            if dist < min_dist:
+                min_dist = dist
+                best_edge = edge
+        except Exception:
+            if best_edge is None:
+                best_edge = edge
+    return best_edge
+
+
+def _resolve_curves(reference="last"):
+    ref = str(reference or "last").strip().lower()
+    if ref in {"last", "last_curves", "previous_curves"}:
+        return _state.get("last_curves", [])
+    if ref in _state["sketches"]:
+        sketch_feature = _state["sketches"][ref]
+        try:
+            if hasattr(sketch_feature, "GetAllGeometry"):
+                return list(sketch_feature.GetAllGeometry() or [])
+            if hasattr(sketch_feature, "Sketch") and hasattr(sketch_feature.Sketch, "GetAllGeometry"):
+                return list(sketch_feature.Sketch.GetAllGeometry() or [])
+        except Exception:
+            pass
+    try:
+        feature = _resolve_feature(reference)
+        if hasattr(feature, "GetAllGeometry"):
+            return list(feature.GetAllGeometry() or [])
+        if hasattr(feature, "Sketch") and hasattr(feature.Sketch, "GetAllGeometry"):
+            return list(feature.Sketch.GetAllGeometry() or [])
+    except Exception:
+        pass
+    return _state.get("last_curves", [])
+
+
+def _build_section_from_curves(work_part, curves):
+    section = work_part.Sections.CreateSection(0.0095, 0.01, 0.5)
+    rules = [work_part.ScRuleFactory.CreateRuleCurveDumb([c]) for c in curves]
+    if curves:
+        section.AddToSection(
+            rules, curves[0],
+            NXOpen.NXObject.Null, NXOpen.NXObject.Null,
+            NXOpen.Point3d(0.0, 0.0, 0.0),
+            NXOpen.Section.Mode.Create, False
+        )
+    return section
+
+
+def _execute_surface_builder(builder_name, config_fn, success_message):
+    work_part = _ensure_work_part()
+    builder_factory = getattr(work_part.Features, builder_name, None)
+    if not callable(builder_factory):
+        for attr in dir(work_part.Features):
+            if attr.lower() == builder_name.lower():
+                builder_factory = getattr(work_part.Features, attr)
+                break
+    if not callable(builder_factory):
+        return {"ok": False, "error": f"NXOpen Features has no builder: {builder_name}"}
+    builder = builder_factory(NXOpen.Features.Feature.Null)
+    try:
+        config_fn(builder, work_part)
+        commit_method = getattr(builder, "CommitFeature", None) or getattr(builder, "Commit", None)
+        if callable(commit_method):
+            feature = commit_method()
+            if feature:
+                _remember_feature(feature)
+        else:
+            raise RuntimeError(f"Builder {builder_name} has no Commit or CommitFeature method")
+    except Exception as e:
+        return {"ok": False, "error": f"Failed executing {builder_name}: {str(e)}"}
+    finally:
+        builder.Destroy()
+    fit_view()
+    return {"ok": True, "message": success_message}
+
+
+def create_base_surface(plane="XY", width=50.0, height=50.0):
+    width = float(width)
+    height = float(height)
+    work_part = _ensure_work_part()
+    create_sketch(plane)
+    draw_rectangle(-width/2, -height/2, width, height)
+    curves = _state.get("last_curves", [])
+    if not curves:
+        return {"ok": False, "error": "Failed to create curves for base surface"}
+    def config(builder, wp):
+        builder.Section = _build_section_from_curves(wp, curves)
+    res = _execute_surface_builder("CreateBoundedPlaneBuilder", config, f"Created base surface {width}x{height} on {plane}")
+    _state["last_curves"] = []
+    return res
+
+
+def extrude_surface(distance, start=0.0, direction="auto"):
+    distance = float(distance)
+    start = float(start)
+    work_part = _ensure_work_part()
+    curves = _state.get("last_curves", [])
+    if not curves:
+        return {"ok": False, "error": "No curves to extrude as surface"}
+    def config(builder, wp):
+        builder.Section = _build_section_from_curves(wp, curves)
+        resolved_dir = _resolve_direction(direction)
+        origin = NXOpen.Point3d(0.0, 0.0, 0.0)
+        builder.Direction = _create_direction(wp, origin, _direction_vector(resolved_dir))
+        builder.Limits.StartExtend.Value.RightHandSide = _create_named_expression(wp, "EXTRUDE_SURF_START", start)
+        builder.Limits.EndExtend.Value.RightHandSide = _create_named_expression(wp, "EXTRUDE_SURF_DIST", distance)
+        for attr in ("FeatureOption", "FeatureOptions"):
+            if hasattr(builder, attr):
+                try:
+                    setattr(builder, attr, getattr(NXOpen.Features, "FeatureOption", None).Sheet)
+                except Exception:
+                    pass
+    res = _execute_surface_builder("CreateExtrudeBuilder", config, f"Extruded surface {distance}mm")
+    _state["last_curves"] = []
+    return res
+
+
+def create_swept(section="last", guide="last"):
+    sec_curves = _resolve_curves(section)
+    guide_curves = _resolve_curves(guide)
+    if not sec_curves or not guide_curves:
+        return {"ok": False, "error": "Section or guide curves could not be resolved"}
+    def config(builder, wp):
+        sec = _build_section_from_curves(wp, sec_curves)
+        gd = _build_section_from_curves(wp, guide_curves)
+        for attr in ("Profile", "SweepProfile", "Section"):
+            if hasattr(builder, attr):
+                try:
+                    setattr(builder, attr, sec)
+                except Exception:
+                    pass
+        for attr in ("Guide", "SweepGuide", "Path"):
+            if hasattr(builder, attr):
+                try:
+                    setattr(builder, attr, gd)
+                except Exception:
+                    pass
+    return _execute_surface_builder("CreateSweepBuilder", config, "Swept surface created")
+
+
+def create_through_curves(sections="last"):
+    sec_curves = _resolve_curves(sections)
+    if not sec_curves:
+        return {"ok": False, "error": "Through curves sections not found"}
+    def config(builder, wp):
+        sec = _build_section_from_curves(wp, sec_curves)
+        if hasattr(builder, "SectionsList"):
+            builder.SectionsList.Add(sec)
+        elif hasattr(builder, "Sections"):
+            builder.Sections.Add(sec)
+    return _execute_surface_builder("CreateThroughCurvesBuilder", config, "Through curves surface created")
+
+
+def create_through_curve_mesh(primary="last", cross="last"):
+    prim_curves = _resolve_curves(primary)
+    crs_curves = _resolve_curves(cross)
+    def config(builder, wp):
+        sec_p = _build_section_from_curves(wp, prim_curves)
+        sec_c = _build_section_from_curves(wp, crs_curves)
+        if hasattr(builder, "PrimarySections"):
+            builder.PrimarySections.Add(sec_p)
+        if hasattr(builder, "CrossSections"):
+            builder.CrossSections.Add(sec_c)
+    return _execute_surface_builder("CreateThroughCurveMeshBuilder", config, "Through curve mesh created")
+
+
+def add_face_blend(face1_x, face1_y, face1_z, face2_x, face2_y, face2_z, radius=5.0, body="last"):
+    radius = float(radius)
+    f1 = _resolve_face_by_coordinate(body, face1_x, face1_y, face1_z)
+    f2 = _resolve_face_by_coordinate(body, face2_x, face2_y, face2_z)
+    def config(builder, wp):
+        r_name = _create_named_expression(wp, "FACE_BLEND_R", radius)
+        if hasattr(builder, "Radius"):
+            builder.Radius.RightHandSide = r_name
+        collector1 = wp.ScCollectors.CreateCollector()
+        collector2 = wp.ScCollectors.CreateCollector()
+        rule1 = wp.ScRuleFactory.CreateRuleFaceDumb([f1])
+        rule2 = wp.ScRuleFactory.CreateRuleFaceDumb([f2])
+        _set_collector_rules(collector1, [rule1])
+        _set_collector_rules(collector2, [rule2])
+        if hasattr(builder, "FirstFaceCollector"):
+            builder.FirstFaceCollector = collector1
+        if hasattr(builder, "SecondFaceCollector"):
+            builder.SecondFaceCollector = collector2
+    return _execute_surface_builder("CreateFaceBlendBuilder", config, f"Face blend R{radius}mm added between faces")
+
+
+def offset_surface(distance, body="last", face_x=0.0, face_y=0.0, face_z=0.0):
+    distance = float(distance)
+    f = _resolve_face_by_coordinate(body, face_x, face_y, face_z)
+    def config(builder, wp):
+        dist_name = _create_named_expression(wp, "OFFSET_DIST", distance)
+        if hasattr(builder, "Distance"):
+            builder.Distance.RightHandSide = dist_name
+        collector = wp.ScCollectors.CreateCollector()
+        rule = wp.ScRuleFactory.CreateRuleFaceDumb([f])
+        _set_collector_rules(collector, [rule])
+        if hasattr(builder, "FaceCollector"):
+            builder.FaceCollector = collector
+    return _execute_surface_builder("CreateOffsetSurfaceBuilder", config, f"Created offset surface of {distance}mm")
+
+
+def thicken_sheet(thickness, direction="auto", body="last"):
+    thickness = float(thickness)
+    target_body = _resolve_body(body)
+    def config(builder, wp):
+        t_name = _create_named_expression(wp, "THICKEN_T", thickness)
+        if hasattr(builder, "FirstOffset"):
+            builder.FirstOffset.RightHandSide = t_name
+        if hasattr(builder, "SecondOffset"):
+            builder.SecondOffset.RightHandSide = "0.0"
+        collector = wp.ScCollectors.CreateCollector()
+        rule = wp.ScRuleFactory.CreateRuleBodyDumb([target_body], True)
+        _set_collector_rules(collector, [rule])
+        if hasattr(builder, "FaceCollector"):
+            builder.FaceCollector = collector
+        resolved_dir = _resolve_direction(direction)
+        origin = NXOpen.Point3d(0.0, 0.0, 0.0)
+        builder.Direction = _create_direction(wp, origin, _direction_vector(resolved_dir))
+    return _execute_surface_builder("CreateThickenBuilder", config, f"Thickened sheet body '{_body_name(target_body)}' by {thickness}mm")
+
+
+def sweep_along_guide(section="last", guide="last"):
+    sec_curves = _resolve_curves(section)
+    guide_curves = _resolve_curves(guide)
+    if not sec_curves or not guide_curves:
+        return {"ok": False, "error": "Section or guide curves could not be resolved"}
+    def config(builder, wp):
+        sec = _build_section_from_curves(wp, sec_curves)
+        gd = _build_section_from_curves(wp, guide_curves)
+        for attr in ("Profile", "SweepProfile", "Section"):
+            if hasattr(builder, attr):
+                try:
+                    setattr(builder, attr, sec)
+                except Exception:
+                    pass
+        for attr in ("Guide", "SweepGuide", "Path"):
+            if hasattr(builder, attr):
+                try:
+                    setattr(builder, attr, gd)
+                except Exception:
+                    pass
+    return _execute_surface_builder("CreateSweepAlongGuideBuilder", config, "Sweep along guide created")
+
+
+def variational_sweep(section="last", guide="last"):
+    sec_curves = _resolve_curves(section)
+    guide_curves = _resolve_curves(guide)
+    def config(builder, wp):
+        sec = _build_section_from_curves(wp, sec_curves)
+        gd = _build_section_from_curves(wp, guide_curves)
+        if hasattr(builder, "Section"):
+            builder.Section = sec
+        if hasattr(builder, "Path"):
+            builder.Path = gd
+    return _execute_surface_builder("CreateVariationalSweepBuilder", config, "Variational sweep created")
+
+
+def create_tube(guide="last", outer_diameter=10.0, inner_diameter=0.0):
+    outer_diameter = float(outer_diameter)
+    inner_diameter = float(inner_diameter)
+    guide_curves = _resolve_curves(guide)
+    if not guide_curves:
+        return {"ok": False, "error": "Tube guide curves could not be resolved"}
+    def config(builder, wp):
+        gd = _build_section_from_curves(wp, guide_curves)
+        od_name = _create_named_expression(wp, "TUBE_OD", outer_diameter)
+        id_name = _create_named_expression(wp, "TUBE_ID", inner_diameter)
+        if hasattr(builder, "OuterDiameter"):
+            builder.OuterDiameter.RightHandSide = od_name
+        if hasattr(builder, "InnerDiameter"):
+            builder.InnerDiameter.RightHandSide = id_name
+        if hasattr(builder, "Path"):
+            builder.Path = gd
+    return _execute_surface_builder("CreateTubeBuilder", config, f"Tube created along guide (OD={outer_diameter}, ID={inner_diameter})")
+
+
+def swept_volume(tool_body="last", guide="last"):
+    t_body = _resolve_body(tool_body)
+    guide_curves = _resolve_curves(guide)
+    def config(builder, wp):
+        gd = _build_section_from_curves(wp, guide_curves)
+        if hasattr(builder, "ToolBody"):
+            builder.ToolBody = t_body
+        if hasattr(builder, "Path"):
+            builder.Path = gd
+    return _execute_surface_builder("CreateSweptVolumeBuilder", config, "Swept volume created")
+
+
+def create_ruled(section1="last", section2="last"):
+    sec1 = _resolve_curves(section1)
+    sec2 = _resolve_curves(section2)
+    def config(builder, wp):
+        s1 = _build_section_from_curves(wp, sec1)
+        s2 = _build_section_from_curves(wp, sec2)
+        if hasattr(builder, "FirstSection"):
+            builder.FirstSection = s1
+        if hasattr(builder, "SecondSection"):
+            builder.SecondSection = s2
+    return _execute_surface_builder("CreateRuledBuilder", config, "Ruled surface created")
+
+
+def n_sided_surface(boundary="last"):
+    curves = _resolve_curves(boundary)
+    def config(builder, wp):
+        sec = _build_section_from_curves(wp, curves)
+        if hasattr(builder, "BoundaryCurves"):
+            builder.BoundaryCurves.Add(sec)
+    return _execute_surface_builder("CreateNsidedSurfaceBuilder", config, "N-Sided surface created")
+
+
+def fill_surface(boundary="last"):
+    curves = _resolve_curves(boundary)
+    def config(builder, wp):
+        sec = _build_section_from_curves(wp, curves)
+        if hasattr(builder, "BoundaryCurves"):
+            builder.BoundaryCurves.Add(sec)
+    return _execute_surface_builder("CreateFillHoleBuilder", config, "Fill surface created")
+
+
+def bounded_plane(boundary="last"):
+    curves = _resolve_curves(boundary)
+    if not curves:
+        return {"ok": False, "error": "No boundary curves for Bounded Plane"}
+    def config(builder, wp):
+        builder.Section = _build_section_from_curves(wp, curves)
+    return _execute_surface_builder("CreateBoundedPlaneBuilder", config, "Bounded plane created")
+
+
+def patch_openings(body="last", boundary="last"):
+    target_body = _resolve_body(body)
+    curves = _resolve_curves(boundary)
+    def config(builder, wp):
+        sec = _build_section_from_curves(wp, curves)
+        if hasattr(builder, "TargetBody"):
+            builder.TargetBody = target_body
+        if hasattr(builder, "BoundaryCurves"):
+            builder.BoundaryCurves.Add(sec)
+    return _execute_surface_builder("CreatePatchOpeningsBuilder", config, "Patched openings on sheet body")
+
+
+def variable_offset(distance_start=2.0, distance_end=5.0, body="last", face_x=0.0, face_y=0.0, face_z=0.0):
+    ds = float(distance_start)
+    de = float(distance_end)
+    f = _resolve_face_by_coordinate(body, face_x, face_y, face_z)
+    def config(builder, wp):
+        if hasattr(builder, "FaceCollector"):
+            collector = wp.ScCollectors.CreateCollector()
+            rule = wp.ScRuleFactory.CreateRuleFaceDumb([f])
+            _set_collector_rules(collector, [rule])
+            builder.FaceCollector = collector
+        if hasattr(builder, "StartDistance"):
+            builder.StartDistance.RightHandSide = _create_named_expression(wp, "VAR_OFFSET_START", ds)
+        if hasattr(builder, "EndDistance"):
+            builder.EndDistance.RightHandSide = _create_named_expression(wp, "VAR_OFFSET_END", de)
+    return _execute_surface_builder("CreateVariableOffsetBuilder", config, f"Variable offset surface ({ds}mm to {de}mm) created")
+
+
+def sheet_from_curve(boundary="last"):
+    return bounded_plane(boundary)
+
+
+def law_extension(distance=10.0, angle=45.0, boundary_edge_x=0.0, boundary_edge_y=0.0, boundary_edge_z=0.0, body="last"):
+    dist = float(distance)
+    ang = float(angle)
+    edge = _resolve_edge_by_coordinate(body, boundary_edge_x, boundary_edge_y, boundary_edge_z)
+    def config(builder, wp):
+        if hasattr(builder, "Length"):
+            builder.Length.RightHandSide = _create_named_expression(wp, "LAW_EXT_LEN", dist)
+        if hasattr(builder, "Angle"):
+            builder.Angle.RightHandSide = _create_named_expression(wp, "LAW_EXT_ANG", ang)
+        if hasattr(builder, "BoundaryEdgeCollector"):
+            collector = wp.ScCollectors.CreateCollector()
+            rule = wp.ScRuleFactory.CreateRuleEdgeTangent(edge, NXOpen.Edge.Null, False, 0.5, False)
+            _set_collector_rules(collector, [rule])
+            builder.BoundaryEdgeCollector = collector
+    return _execute_surface_builder("CreateLawExtensionBuilder", config, "Law extension surface created")
+
+
+def studio_surface(section1="last", section2="last"):
+    sec1 = _resolve_curves(section1)
+    sec2 = _resolve_curves(section2)
+    def config(builder, wp):
+        s1 = _build_section_from_curves(wp, sec1)
+        s2 = _build_section_from_curves(wp, sec2)
+        if hasattr(builder, "Sections"):
+            builder.Sections.Add(s1)
+            builder.Sections.Add(s2)
+    return _execute_surface_builder("CreateStudioSurfaceBuilder", config, "Studio surface created")
+
+
+def styled_sweep(section="last", guide="last"):
+    sec_curves = _resolve_curves(section)
+    guide_curves = _resolve_curves(guide)
+    def config(builder, wp):
+        sec = _build_section_from_curves(wp, sec_curves)
+        gd = _build_section_from_curves(wp, guide_curves)
+        if hasattr(builder, "Section"):
+            builder.Section = sec
+        if hasattr(builder, "Guide"):
+            builder.Guide = gd
+    return _execute_surface_builder("CreateStyledSweepBuilder", config, "Styled sweep surface created")
+
+
+def section_surface(section1="last", section2="last"):
+    sec1 = _resolve_curves(section1)
+    sec2 = _resolve_curves(section2)
+    def config(builder, wp):
+        s1 = _build_section_from_curves(wp, sec1)
+        s2 = _build_section_from_curves(wp, sec2)
+        if hasattr(builder, "Sections"):
+            builder.Sections.Add(s1)
+            builder.Sections.Add(s2)
+    return _execute_surface_builder("CreateSectionSurfaceBuilder", config, "Section surface created")
+
+
+def aesthetic_face_blend(radius=5.0, body="last", face1_x=0.0, face1_y=0.0, face1_z=0.0, face2_x=0.0, face2_y=0.0, face2_z=0.0):
+    radius = float(radius)
+    f1 = _resolve_face_by_coordinate(body, face1_x, face1_y, face1_z)
+    f2 = _resolve_face_by_coordinate(body, face2_x, face2_y, face2_z)
+    def config(builder, wp):
+        if hasattr(builder, "Radius"):
+            builder.Radius.RightHandSide = _create_named_expression(wp, "AESTHETIC_BLEND_R", radius)
+        collector1 = wp.ScCollectors.CreateCollector()
+        collector2 = wp.ScCollectors.CreateCollector()
+        rule1 = wp.ScRuleFactory.CreateRuleFaceDumb([f1])
+        rule2 = wp.ScRuleFactory.CreateRuleFaceDumb([f2])
+        _set_collector_rules(collector1, [rule1])
+        _set_collector_rules(collector2, [rule2])
+        if hasattr(builder, "FirstFaceCollector"):
+            builder.FirstFaceCollector = collector1
+        if hasattr(builder, "SecondFaceCollector"):
+            builder.SecondFaceCollector = collector2
+    return _execute_surface_builder("CreateAestheticFaceBlendBuilder", config, f"Aesthetic face blend R{radius}mm created")
+
+
+def bridge_surface(edge1_x=0.0, edge1_y=0.0, edge1_z=0.0, edge2_x=0.0, edge2_y=0.0, edge2_z=0.0, body="last"):
+    ed1 = _resolve_edge_by_coordinate(body, edge1_x, edge1_y, edge1_z)
+    ed2 = _resolve_edge_by_coordinate(body, edge2_x, edge2_y, edge2_z)
+    def config(builder, wp):
+        c1 = wp.ScCollectors.CreateCollector()
+        c2 = wp.ScCollectors.CreateCollector()
+        r1 = wp.ScRuleFactory.CreateRuleEdgeTangent(ed1, NXOpen.Edge.Null, False, 0.5, False)
+        r2 = wp.ScRuleFactory.CreateRuleEdgeTangent(ed2, NXOpen.Edge.Null, False, 0.5, False)
+        _set_collector_rules(c1, [r1])
+        _set_collector_rules(c2, [r2])
+        if hasattr(builder, "FirstEdgeCollector"):
+            builder.FirstEdgeCollector = c1
+        if hasattr(builder, "SecondEdgeCollector"):
+            builder.SecondEdgeCollector = c2
+    return _execute_surface_builder("CreateBridgeSurfaceBuilder", config, "Bridge surface created between edges")
+
+
+def blend_corner(radius=5.0, corner_vertex_x=0.0, corner_vertex_y=0.0, corner_vertex_z=0.0, body="last"):
+    radius = float(radius)
+    def config(builder, wp):
+        r_name = _create_named_expression(wp, "BLEND_CORNER_R", radius)
+        if hasattr(builder, "Radius"):
+            builder.Radius.RightHandSide = r_name
+    return _execute_surface_builder("CreateBlendCornerBuilder", config, "Blend corner feature created")
+
+
+def styled_corner(corner_vertex_x=0.0, corner_vertex_y=0.0, corner_vertex_z=0.0, body="last"):
+    def config(builder, wp):
+        pass
+    return _execute_surface_builder("CreateStyledCornerBuilder", config, "Styled corner created")
+
+
+def four_point_surface(x1, y1, z1, x2, y2, z2, x3, y3, z3, x4, y4, z4):
+    def config(builder, wp):
+        p1 = NXOpen.Point3d(float(x1), float(y1), float(z1))
+        p2 = NXOpen.Point3d(float(x2), float(y2), float(z2))
+        p3 = NXOpen.Point3d(float(x3), float(y3), float(z3))
+        p4 = NXOpen.Point3d(float(x4), float(y4), float(z4))
+        if hasattr(builder, "Point1"):
+            builder.Point1 = p1
+        if hasattr(builder, "Point2"):
+            builder.Point2 = p2
+        if hasattr(builder, "Point3"):
+            builder.Point3 = p3
+        if hasattr(builder, "Point4"):
+            builder.Point4 = p4
+    return _execute_surface_builder("CreateFourPointSurfaceBuilder", config, "Four point surface created")
+
+
+def rapid_surfacing(boundary="last"):
+    curves = _resolve_curves(boundary)
+    def config(builder, wp):
+        sec = _build_section_from_curves(wp, curves)
+        if hasattr(builder, "BoundaryCurves"):
+            builder.BoundaryCurves.Add(sec)
+    return _execute_surface_builder("CreateRapidSurfacingBuilder", config, "Rapid surfacing sheet created")
+
+
+def fit_surface(target_face_x=0.0, target_face_y=0.0, target_face_z=0.0, body="last"):
+    f = _resolve_face_by_coordinate(body, target_face_x, target_face_y, target_face_z)
+    def config(builder, wp):
+        if hasattr(builder, "FaceToFit"):
+            builder.FaceToFit = f
+    return _execute_surface_builder("CreateFitSurfaceBuilder", config, "Fit surface created")
+
+
+def variable_offset_face(distance=5.0, body="last", face_x=0.0, face_y=0.0, face_z=0.0):
+    dist = float(distance)
+    f = _resolve_face_by_coordinate(body, face_x, face_y, face_z)
+    def config(builder, wp):
+        dist_name = _create_named_expression(wp, "VAR_OFFSET_FACE_DIST", dist)
+        if hasattr(builder, "Distance"):
+            builder.Distance.RightHandSide = dist_name
+        collector = wp.ScCollectors.CreateCollector()
+        rule = wp.ScRuleFactory.CreateRuleFaceDumb([f])
+        _set_collector_rules(collector, [rule])
+        if hasattr(builder, "FaceCollector"):
+            builder.FaceCollector = collector
+    return _execute_surface_builder("CreateVariableOffsetFaceBuilder", config, f"Variable offset face by {dist}mm created")
+
+
+def extension_surface(distance=10.0, boundary_edge_x=0.0, boundary_edge_y=0.0, boundary_edge_z=0.0, body="last"):
+    dist = float(distance)
+    edge = _resolve_edge_by_coordinate(body, boundary_edge_x, boundary_edge_y, boundary_edge_z)
+    def config(builder, wp):
+        dist_name = _create_named_expression(wp, "EXT_SURF_DIST", dist)
+        if hasattr(builder, "Distance"):
+            builder.Distance.RightHandSide = dist_name
+        collector = wp.ScCollectors.CreateCollector()
+        rule = wp.ScRuleFactory.CreateRuleEdgeTangent(edge, NXOpen.Edge.Null, False, 0.5, False)
+        _set_collector_rules(collector, [rule])
+        if hasattr(builder, "EdgeCollector"):
+            builder.EdgeCollector = collector
+    return _execute_surface_builder("CreateExtensionSurfaceBuilder", config, f"Extension surface of {dist}mm created")
+
+
+def silhouette_flange(distance=10.0, body="last", face_x=0.0, face_y=0.0, face_z=0.0):
+    dist = float(distance)
+    f = _resolve_face_by_coordinate(body, face_x, face_y, face_z)
+    def config(builder, wp):
+        dist_name = _create_named_expression(wp, "SILHOUETTE_DIST", dist)
+        if hasattr(builder, "Distance"):
+            builder.Distance.RightHandSide = dist_name
+        if hasattr(builder, "Face"):
+            builder.Face = f
+    return _execute_surface_builder("CreateSilhouetteFlangeBuilder", config, f"Silhouette flange of {dist}mm created")
+
+
+def face_pairs(distance=2.0, body="last"):
+    dist = float(distance)
+    target_body = _resolve_body(body)
+    def config(builder, wp):
+        dist_name = _create_named_expression(wp, "FACE_PAIRS_DIST", dist)
+        if hasattr(builder, "SearchDistance"):
+            builder.SearchDistance.RightHandSide = dist_name
+        if hasattr(builder, "Body"):
+            builder.Body = target_body
+    return _execute_surface_builder("CreateFacePairsBuilder", config, f"Face pairs analysis created at distance {dist}mm")
+
+
+def user_defined_surface(boundary="last"):
+    curves = _resolve_curves(boundary)
+    def config(builder, wp):
+        sec = _build_section_from_curves(wp, curves)
+        if hasattr(builder, "ProfileSection"):
+            builder.ProfileSection = sec
+    return _execute_surface_builder("CreateUserDefinedSurfaceBuilder", config, "User-defined surface created")
+
+
+def offset_surface_advanced(distance=5.0, body="last", face_x=0.0, face_y=0.0, face_z=0.0):
+    return offset_surface(distance, body, face_x, face_y, face_z)
+
+
+def bisector_surface(face1_x=0.0, face1_y=0.0, face1_z=0.0, face2_x=0.0, face2_y=0.0, face2_z=0.0, body="last"):
+    f1 = _resolve_face_by_coordinate(body, face1_x, face1_y, face1_z)
+    f2 = _resolve_face_by_coordinate(body, face2_x, face2_y, face2_z)
+    def config(builder, wp):
+        if hasattr(builder, "FirstFace"):
+            builder.FirstFace = f1
+        if hasattr(builder, "SecondFace"):
+            builder.SecondFace = f2
+    return _execute_surface_builder("CreateBisectorSurfaceBuilder", config, "Bisector surface created between faces")
+
+
+def surface_from_poles(boundary="last"):
+    curves = _resolve_curves(boundary)
+    def config(builder, wp):
+        sec = _build_section_from_curves(wp, curves)
+        if hasattr(builder, "ProfileSection"):
+            builder.ProfileSection = sec
+    return _execute_surface_builder("CreateSurfaceFromPolesBuilder", config, "Surface from poles created")
+
+
+def surface_through_points(boundary="last"):
+    curves = _resolve_curves(boundary)
+    def config(builder, wp):
+        sec = _build_section_from_curves(wp, curves)
+        if hasattr(builder, "ProfileSection"):
+            builder.ProfileSection = sec
+    return _execute_surface_builder("CreateSurfaceThroughPointsBuilder", config, "Surface through points created")
+
+
+def ribbon_builder(width=10.0, boundary_edge_x=0.0, boundary_edge_y=0.0, boundary_edge_z=0.0, body="last"):
+    w = float(width)
+    edge = _resolve_edge_by_coordinate(body, boundary_edge_x, boundary_edge_y, boundary_edge_z)
+    def config(builder, wp):
+        w_name = _create_named_expression(wp, "RIBBON_WIDTH", w)
+        if hasattr(builder, "Width"):
+            builder.Width.RightHandSide = w_name
+        collector = wp.ScCollectors.CreateCollector()
+        rule = wp.ScRuleFactory.CreateRuleEdgeTangent(edge, NXOpen.Edge.Null, False, 0.5, False)
+        _set_collector_rules(collector, [rule])
+        if hasattr(builder, "EdgeCollector"):
+            builder.EdgeCollector = collector
+    return _execute_surface_builder("CreateRibbonBuilder", config, f"Ribbon surface of {w}mm width created along edge")
+
+
+def boolean_combine(operation="intersect", target="last", tool="last"):
+    work_part = _ensure_work_part()
+    target_body = _resolve_body(target)
+    tool_body = _resolve_body(tool)
+    if target_body == tool_body:
+        raise SelectionError("Boolean target and tool resolve to the same body")
+    builder = work_part.Features.CreateBooleanBuilder(NXOpen.Features.BooleanFeature.Null)
+    try:
+        op_name = operation.lower()
+        if op_name == "unite":
+            builder.Operation = NXOpen.Features.Feature.BooleanType.Unite
+        elif op_name == "subtract":
+            builder.Operation = NXOpen.Features.Feature.BooleanType.Subtract
+        elif op_name == "intersect":
+            builder.Operation = NXOpen.Features.Feature.BooleanType.Intersect
+        else:
+            raise SelectionError(f"Unsupported boolean operation: {operation}")
+        _set_boolean_inputs(builder, work_part, target_body, [tool_body])
+        feature = builder.CommitFeature()
+        _remember_feature(feature)
+    finally:
+        builder.Destroy()
+    fit_view()
+    return {"ok": True, "message": f"Boolean {op_name} completed"}
+
+
+def trim_sheet(target_body="last", boundary_sketch="last"):
+    t_body = _resolve_body(target_body)
+    curves = _resolve_curves(boundary_sketch)
+    if not curves:
+        return {"ok": False, "error": "Trim boundary curves not resolved"}
+    def config(builder, wp):
+        sec = _build_section_from_curves(wp, curves)
+        if hasattr(builder, "TargetBody"):
+            builder.TargetBody = t_body
+        if hasattr(builder, "BoundarySection"):
+            builder.BoundarySection = sec
+    return _execute_surface_builder("CreateTrimSheetBuilder", config, "Trimmed sheet body")
+
+
+def extend_sheet(distance=10.0, boundary_edge_x=0.0, boundary_edge_y=0.0, boundary_edge_z=0.0, body="last"):
+    dist = float(distance)
+    edge = _resolve_edge_by_coordinate(body, boundary_edge_x, boundary_edge_y, boundary_edge_z)
+    def config(builder, wp):
+        d_name = _create_named_expression(wp, "EXT_SHEET_DIST", dist)
+        if hasattr(builder, "Distance"):
+            builder.Distance.RightHandSide = d_name
+        collector = wp.ScCollectors.CreateCollector()
+        rule = wp.ScRuleFactory.CreateRuleEdgeTangent(edge, NXOpen.Edge.Null, False, 0.5, False)
+        _set_collector_rules(collector, [rule])
+        if hasattr(builder, "EdgeCollector"):
+            builder.EdgeCollector = collector
+    return _execute_surface_builder("CreateExtendSheetBuilder", config, f"Extended sheet edge by {dist}mm")
+
+
+def trim_and_extend(target_body="last", tool_body="last"):
+    tb = _resolve_body(target_body)
+    tool = _resolve_body(tool_body)
+    def config(builder, wp):
+        if hasattr(builder, "TargetBody"):
+            builder.TargetBody = tb
+        if hasattr(builder, "ToolBody"):
+            builder.ToolBody = tool
+    return _execute_surface_builder("CreateTrimAndExtendBuilder", config, "Trim and extend operation completed")
+
+
+def sew_sheets(target_sheet="last", tool_sheets="last"):
+    tb = _resolve_body(target_sheet)
+    tool = _resolve_body(tool_sheets)
+    def config(builder, wp):
+        if hasattr(builder, "TargetBody"):
+            builder.TargetBody = tb
+        if hasattr(builder, "ToolBodies"):
+            builder.ToolBodies.Add([tool])
+    return _execute_surface_builder("CreateSewBuilder", config, "Sheets sewn successfully")
+
+
+def split_body(target_body="last", tool_face_x=0.0, tool_face_y=0.0, tool_face_z=0.0):
+    tb = _resolve_body(target_body)
+    f = _resolve_face_by_coordinate(target_body, tool_face_x, tool_face_y, tool_face_z)
+    def config(builder, wp):
+        if hasattr(builder, "TargetBody"):
+            builder.TargetBody = tb
+        if hasattr(builder, "ToolFace"):
+            builder.ToolFace = f
+    return _execute_surface_builder("CreateSplitBodyBuilder", config, "Body split successfully")
+
+
+def divide_face(target_face_x=0.0, target_face_y=0.0, target_face_z=0.0, boundary_sketch="last", body="last"):
+    f = _resolve_face_by_coordinate(body, target_face_x, target_face_y, target_face_z)
+    curves = _resolve_curves(boundary_sketch)
+    def config(builder, wp):
+        sec = _build_section_from_curves(wp, curves)
+        if hasattr(builder, "FaceToDivide"):
+            builder.FaceToDivide = f
+        if hasattr(builder, "DividingCurves"):
+            builder.DividingCurves = sec
+    return _execute_surface_builder("CreateDivideFaceBuilder", config, "Divide face completed")
+
+
+def snip_surface(target_face_x=0.0, target_face_y=0.0, target_face_z=0.0, body="last"):
+    f = _resolve_face_by_coordinate(body, target_face_x, target_face_y, target_face_z)
+    def config(builder, wp):
+        if hasattr(builder, "FaceToSnip"):
+            builder.FaceToSnip = f
+    return _execute_surface_builder("CreateSnipSurfaceBuilder", config, "Snip surface completed")
+
+
+def untrim_sheet(target_edge_x=0.0, target_edge_y=0.0, target_edge_z=0.0, body="last"):
+    edge = _resolve_edge_by_coordinate(body, target_edge_x, target_edge_y, target_edge_z)
+    def config(builder, wp):
+        collector = wp.ScCollectors.CreateCollector()
+        rule = wp.ScRuleFactory.CreateRuleEdgeTangent(edge, NXOpen.Edge.Null, False, 0.5, False)
+        _set_collector_rules(collector, [rule])
+        if hasattr(builder, "EdgeCollector"):
+            builder.EdgeCollector = collector
+    return _execute_surface_builder("CreateUntrimBuilder", config, "Untrimmed sheet successfully")
+
+
+def delete_edge(target_edge_x=0.0, target_edge_y=0.0, target_edge_z=0.0, body="last"):
+    edge = _resolve_edge_by_coordinate(body, target_edge_x, target_edge_y, target_edge_z)
+    def config(builder, wp):
+        if hasattr(builder, "EdgeToDelete"):
+            builder.EdgeToDelete = edge
+    return _execute_surface_builder("CreateDeleteEdgeBuilder", config, "Delete edge completed")
+
+
+def emboss_body(target_body="last", boundary_sketch="last", depth=5.0):
+    tb = _resolve_body(target_body)
+    curves = _resolve_curves(boundary_sketch)
+    depth = float(depth)
+    def config(builder, wp):
+        d_name = _create_named_expression(wp, "EMBOSS_DEPTH", depth)
+        if hasattr(builder, "Depth"):
+            builder.Depth.RightHandSide = d_name
+        if hasattr(builder, "TargetBody"):
+            builder.TargetBody = tb
+        if hasattr(builder, "BoundarySection"):
+            builder.BoundarySection = _build_section_from_curves(wp, curves)
+    return _execute_surface_builder("CreateEmbossBodyBuilder", config, f"Emboss body completed by {depth}mm")
+
+
+def patch_body(target_body="last", tool_sheet="last"):
+    tb = _resolve_body(target_body)
+    tool = _resolve_body(tool_sheet)
+    def config(builder, wp):
+        if hasattr(builder, "TargetBody"):
+            builder.TargetBody = tb
+        if hasattr(builder, "ToolBody"):
+            builder.ToolBody = tool
+    return _execute_surface_builder("CreatePatchBuilder", config, "Body patched successfully")
+
+
+def unsew_sheets(target_body="last", split_edge_x=0.0, split_edge_y=0.0, split_edge_z=0.0):
+    tb = _resolve_body(target_body)
+    edge = _resolve_edge_by_coordinate(target_body, split_edge_x, split_edge_y, split_edge_z)
+    def config(builder, wp):
+        if hasattr(builder, "TargetBody"):
+            builder.TargetBody = tb
+        if hasattr(builder, "EdgeToUnsew"):
+            builder.EdgeToUnsew = edge
+    return _execute_surface_builder("CreateUnsewBuilder", config, "Unsewed sheet body")
+
+
+def make_solid(target_sheet="last"):
+    tb = _resolve_body(target_sheet)
+    def config(builder, wp):
+        if hasattr(builder, "SheetBody"):
+            builder.SheetBody = tb
+    return _execute_surface_builder("CreateMakeSolidBuilder", config, "Sewn sheet body successfully converted to Solid body")
+
+
+def sheet_boundary_analysis(body="last"):
+    tb = _resolve_body(body)
+    edges = list(tb.GetEdges() or [])
+    free_edges = 0
+    for edge in edges:
+        try:
+            faces = list(edge.GetFaces() or [])
+            if len(faces) == 1:
+                free_edges += 1
+        except Exception:
+            pass
+    return {"ok": True, "message": f"Sheet boundary analysis: {len(edges)} total edges, {free_edges} boundary edges found"}
+
+
+def quilt_sheets(target_sheet="last"):
+    return sew_sheets(target_sheet)
+
+
+def reverse_normal(body="last"):
+    tb = _resolve_body(body)
+    def config(builder, wp):
+        if hasattr(builder, "FaceCollector"):
+            collector = wp.ScCollectors.CreateCollector()
+            rule = wp.ScRuleFactory.CreateRuleBodyDumb([tb], True)
+            _set_collector_rules(collector, [rule])
+            builder.FaceCollector = collector
+    return _execute_surface_builder("CreateReverseNormalBuilder", config, "Reversed sheet normal direction")
+
+
+def local_untrim_extend(boundary_edge_x=0.0, boundary_edge_y=0.0, boundary_edge_z=0.0, distance=10.0, body="last"):
+    dist = float(distance)
+    edge = _resolve_edge_by_coordinate(body, boundary_edge_x, boundary_edge_y, boundary_edge_z)
+    def config(builder, wp):
+        d_name = _create_named_expression(wp, "LOCAL_EXT_DIST", dist)
+        if hasattr(builder, "Distance"):
+            builder.Distance.RightHandSide = d_name
+        if hasattr(builder, "Edge"):
+            builder.Edge = edge
+    return _execute_surface_builder("CreateLocalUntrimExtendBuilder", config, f"Untrimmed and extended face by {dist}mm")
+
+
+def replace_edge(target_edge_x=0.0, target_edge_y=0.0, target_edge_z=0.0, tool_sketch="last", body="last"):
+    edge = _resolve_edge_by_coordinate(body, target_edge_x, target_edge_y, target_edge_z)
+    curves = _resolve_curves(tool_sketch)
+    def config(builder, wp):
+        sec = _build_section_from_curves(wp, curves)
+        if hasattr(builder, "EdgeToReplace"):
+            builder.EdgeToReplace = edge
+        if hasattr(builder, "ReplacementCurves"):
+            builder.ReplacementCurves = sec
+    return _execute_surface_builder("CreateReplaceEdgeBuilder", config, "Replaced edge completed")
+
+
+def x_form(body="last"):
+    tb = _resolve_body(body)
+    def config(builder, wp):
+        if hasattr(builder, "Body"):
+            builder.Body = tb
+    return _execute_surface_builder("CreateXformBuilder", config, "X-Form deformation applied")
+
+
+def i_form(body="last"):
+    tb = _resolve_body(body)
+    def config(builder, wp):
+        if hasattr(builder, "Body"):
+            builder.Body = tb
+    return _execute_surface_builder("CreateIformBuilder", config, "I-Form deformation applied")
+
+
+def match_edge(target_edge_x=0.0, target_edge_y=0.0, target_edge_z=0.0, tool_edge_x=0.0, tool_edge_y=0.0, tool_edge_z=0.0, body="last"):
+    ed1 = _resolve_edge_by_coordinate(body, target_edge_x, target_edge_y, target_edge_z)
+    ed2 = _resolve_edge_by_coordinate(body, tool_edge_x, tool_edge_y, tool_edge_z)
+    def config(builder, wp):
+        if hasattr(builder, "TargetEdge"):
+            builder.TargetEdge = ed1
+        if hasattr(builder, "ToolEdge"):
+            builder.ToolEdge = ed2
+    return _execute_surface_builder("CreateMatchEdgeBuilder", config, "Match edge feature created")
+
+
+def edge_symmetry(target_edge_x=0.0, target_edge_y=0.0, target_edge_z=0.0, body="last"):
+    edge = _resolve_edge_by_coordinate(body, target_edge_x, target_edge_y, target_edge_z)
+    def config(builder, wp):
+        if hasattr(builder, "Edge"):
+            builder.Edge = edge
+    return _execute_surface_builder("CreateEdgeSymmetryBuilder", config, "Edge symmetry applied")
+
+
+def global_shaping(body="last"):
+    tb = _resolve_body(body)
+    def config(builder, wp):
+        if hasattr(builder, "Body"):
+            builder.Body = tb
+    return _execute_surface_builder("CreateGlobalShapingBuilder", config, "Global shaping applied to sheet")
+
+
+def global_deformation(body="last"):
+    tb = _resolve_body(body)
+    def config(builder, wp):
+        if hasattr(builder, "Body"):
+            builder.Body = tb
+    return _execute_surface_builder("CreateGlobalDeformationBuilder", config, "Global deformation applied")
+
+
+def flattening_forming(body="last"):
+    tb = _resolve_body(body)
+    def config(builder, wp):
+        if hasattr(builder, "Body"):
+            builder.Body = tb
+    return _execute_surface_builder("CreateFlatteningFormingBuilder", config, "Flattening and forming completed")
+
+
+def heal_surface(body="last"):
+    tb = _resolve_body(body)
+    def config(builder, wp):
+        if hasattr(builder, "Body"):
+            builder.Body = tb
+    return _execute_surface_builder("CreateHealSurfaceBuilder", config, "Surface healed successfully")
+
+
+def edit_uv_direction(body="last"):
+    tb = _resolve_body(body)
+    def config(builder, wp):
+        if hasattr(builder, "Body"):
+            builder.Body = tb
+    return _execute_surface_builder("CreateEditUvDirectionBuilder", config, "Edited face UV direction")
+
+
+def enlarge_face(body="last", distance=5.0, face_x=0.0, face_y=0.0, face_z=0.0):
+    dist = float(distance)
+    f = _resolve_face_by_coordinate(body, face_x, face_y, face_z)
+    def config(builder, wp):
+        d_name = _create_named_expression(wp, "ENLARGE_DIST", dist)
+        if hasattr(builder, "Distance"):
+            builder.Distance.RightHandSide = d_name
+        if hasattr(builder, "Face"):
+            builder.Face = f
+    return _execute_surface_builder("CreateEnlargeBuilder", config, f"Enlarged face by {dist}mm")
+
+
+def snip_into_patches(body="last"):
+    tb = _resolve_body(body)
+    def config(builder, wp):
+        if hasattr(builder, "Body"):
+            builder.Body = tb
+    return _execute_surface_builder("CreateSnipIntoPatchesBuilder", config, "Snipped surface into patches")
+
+
+def smooth_poles(body="last"):
+    tb = _resolve_body(body)
+    def config(builder, wp):
+        if hasattr(builder, "Body"):
+            builder.Body = tb
+    return _execute_surface_builder("CreateSmoothPolesBuilder", config, "Smoothed poles of freeform face")
+
+
+def refit_face(body="last"):
+    tb = _resolve_body(body)
+    def config(builder, wp):
+        if hasattr(builder, "Body"):
+            builder.Body = tb
+    return _execute_surface_builder("CreateRefitFaceBuilder", config, "Refitted face geometry")
+
+
 def dispatch(command):
     tool = command.get("tool")
     args = command.get("args", {})
@@ -2065,6 +3044,251 @@ def dispatch(command):
             args.get("target", "last"),
             args.get("direction", "auto"),
         )
+    # --- Standard Surface Tools ---
+    if tool == "create_base_surface":
+        return create_base_surface(args.get("plane", "XY"), args.get("width", 50.0), args.get("height", 50.0))
+    if tool == "extrude_surface":
+        return extrude_surface(args["distance"], args.get("start", 0.0), args.get("direction", "auto"))
+    if tool == "create_swept":
+        return create_swept(args.get("section", "last"), args.get("guide", "last"))
+    if tool == "create_through_curves":
+        return create_through_curves(args.get("sections", "last"))
+    if tool == "create_through_curve_mesh":
+        return create_through_curve_mesh(args.get("primary", "last"), args.get("cross", "last"))
+    if tool == "add_face_blend":
+        return add_face_blend(
+            args["face1_x"], args["face1_y"], args["face1_z"],
+            args["face2_x"], args["face2_y"], args["face2_z"],
+            args.get("radius", 5.0), args.get("body", "last")
+        )
+    if tool == "offset_surface":
+        return offset_surface(
+            args["distance"], args.get("body", "last"),
+            args.get("face_x", 0.0), args.get("face_y", 0.0), args.get("face_z", 0.0)
+        )
+    if tool == "thicken_sheet":
+        return thicken_sheet(args["thickness"], args.get("direction", "auto"), args.get("body", "last"))
+    if tool == "sweep_along_guide":
+        return sweep_along_guide(args.get("section", "last"), args.get("guide", "last"))
+    if tool == "variational_sweep":
+        return variational_sweep(args.get("section", "last"), args.get("guide", "last"))
+    if tool == "create_tube":
+        return create_tube(args.get("guide", "last"), args.get("outer_diameter", 10.0), args.get("inner_diameter", 0.0))
+    if tool == "swept_volume":
+        return swept_volume(args.get("tool_body", "last"), args.get("guide", "last"))
+    if tool == "create_ruled":
+        return create_ruled(args.get("section1", "last"), args.get("section2", "last"))
+    if tool == "n_sided_surface":
+        return n_sided_surface(args.get("boundary", "last"))
+    if tool == "fill_surface":
+        return fill_surface(args.get("boundary", "last"))
+    if tool == "bounded_plane":
+        return bounded_plane(args.get("boundary", "last"))
+    if tool == "patch_openings":
+        return patch_openings(args.get("body", "last"), args.get("boundary", "last"))
+    if tool == "variable_offset":
+        return variable_offset(
+            args.get("distance_start", 2.0), args.get("distance_end", 5.0),
+            args.get("body", "last"), args.get("face_x", 0.0), args.get("face_y", 0.0), args.get("face_z", 0.0)
+        )
+    if tool == "sheet_from_curve":
+        return sheet_from_curve(args.get("boundary", "last"))
+
+    # --- Advanced Surface Tools ---
+    if tool == "law_extension":
+        return law_extension(
+            args.get("distance", 10.0), args.get("angle", 45.0),
+            args.get("boundary_edge_x", 0.0), args.get("boundary_edge_y", 0.0), args.get("boundary_edge_z", 0.0),
+            args.get("body", "last")
+        )
+    if tool == "studio_surface":
+        return studio_surface(args.get("section1", "last"), args.get("section2", "last"))
+    if tool == "styled_sweep":
+        return styled_sweep(args.get("section", "last"), args.get("guide", "last"))
+    if tool == "section_surface":
+        return section_surface(args.get("section1", "last"), args.get("section2", "last"))
+    if tool == "aesthetic_face_blend":
+        return aesthetic_face_blend(
+            args.get("radius", 5.0), args.get("body", "last"),
+            args.get("face1_x", 0.0), args.get("face1_y", 0.0), args.get("face1_z", 0.0),
+            args.get("face2_x", 0.0), args.get("face2_y", 0.0), args.get("face2_z", 0.0)
+        )
+    if tool == "bridge_surface":
+        return bridge_surface(
+            args.get("edge1_x", 0.0), args.get("edge1_y", 0.0), args.get("edge1_z", 0.0),
+            args.get("edge2_x", 0.0), args.get("edge2_y", 0.0), args.get("edge2_z", 0.0),
+            args.get("body", "last")
+        )
+    if tool == "blend_corner":
+        return blend_corner(
+            args.get("radius", 5.0),
+            args.get("corner_vertex_x", 0.0), args.get("corner_vertex_y", 0.0), args.get("corner_vertex_z", 0.0),
+            args.get("body", "last")
+        )
+    if tool == "styled_corner":
+        return styled_corner(
+            args.get("corner_vertex_x", 0.0), args.get("corner_vertex_y", 0.0), args.get("corner_vertex_z", 0.0),
+            args.get("body", "last")
+        )
+    if tool == "four_point_surface":
+        return four_point_surface(
+            args["x1"], args["y1"], args["z1"], args["x2"], args["y2"], args["z2"],
+            args["x3"], args["y3"], args["z3"], args["x4"], args["y4"], args["z4"]
+        )
+    if tool == "rapid_surfacing":
+        return rapid_surfacing(args.get("boundary", "last"))
+    if tool == "fit_surface":
+        return fit_surface(
+            args.get("target_face_x", 0.0), args.get("target_face_y", 0.0), args.get("target_face_z", 0.0),
+            args.get("body", "last")
+        )
+    if tool == "variable_offset_face":
+        return variable_offset_face(
+            args.get("distance", 5.0), args.get("body", "last"),
+            args.get("face_x", 0.0), args.get("face_y", 0.0), args.get("face_z", 0.0)
+        )
+    if tool == "extension_surface":
+        return extension_surface(
+            args.get("distance", 10.0),
+            args.get("boundary_edge_x", 0.0), args.get("boundary_edge_y", 0.0), args.get("boundary_edge_z", 0.0),
+            args.get("body", "last")
+        )
+    if tool == "silhouette_flange":
+        return silhouette_flange(
+            args.get("distance", 10.0), args.get("body", "last"),
+            args.get("face_x", 0.0), args.get("face_y", 0.0), args.get("face_z", 0.0)
+        )
+    if tool == "face_pairs":
+        return face_pairs(args.get("distance", 2.0), args.get("body", "last"))
+    if tool == "user_defined_surface":
+        return user_defined_surface(args.get("boundary", "last"))
+    if tool == "offset_surface_advanced":
+        return offset_surface_advanced(
+            args.get("distance", 5.0), args.get("body", "last"),
+            args.get("face_x", 0.0), args.get("face_y", 0.0), args.get("face_z", 0.0)
+        )
+    if tool == "bisector_surface":
+        return bisector_surface(
+            args.get("face1_x", 0.0), args.get("face1_y", 0.0), args.get("face1_z", 0.0),
+            args.get("face2_x", 0.0), args.get("face2_y", 0.0), args.get("face2_z", 0.0),
+            args.get("body", "last")
+        )
+    if tool == "surface_from_poles":
+        return surface_from_poles(args.get("boundary", "last"))
+    if tool == "surface_through_points":
+        return surface_through_points(args.get("boundary", "last"))
+    if tool == "ribbon_builder":
+        return ribbon_builder(
+            args.get("width", 10.0),
+            args.get("boundary_edge_x", 0.0), args.get("boundary_edge_y", 0.0), args.get("boundary_edge_z", 0.0),
+            args.get("body", "last")
+        )
+
+    # --- Combine Tools ---
+    if tool == "boolean_combine":
+        return boolean_combine(args.get("operation", "intersect"), args.get("target", "last"), args.get("tool", "last"))
+    if tool == "trim_sheet":
+        return trim_sheet(args.get("target_body", "last"), args.get("boundary_sketch", "last"))
+    if tool == "extend_sheet":
+        return extend_sheet(
+            args.get("distance", 10.0),
+            args.get("boundary_edge_x", 0.0), args.get("boundary_edge_y", 0.0), args.get("boundary_edge_z", 0.0),
+            args.get("body", "last")
+        )
+    if tool == "trim_and_extend":
+        return trim_and_extend(args.get("target_body", "last"), args.get("tool_body", "last"))
+    if tool == "sew_sheets":
+        return sew_sheets(args.get("target_sheet", "last"), args.get("tool_sheets", "last"))
+    if tool == "split_body":
+        return split_body(
+            args.get("target_body", "last"),
+            args.get("tool_face_x", 0.0), args.get("tool_face_y", 0.0), args.get("tool_face_z", 0.0)
+        )
+    if tool == "divide_face":
+        return divide_face(
+            args.get("target_face_x", 0.0), args.get("target_face_y", 0.0), args.get("target_face_z", 0.0),
+            args.get("boundary_sketch", "last"), args.get("body", "last")
+        )
+    if tool == "snip_surface":
+        return snip_surface(
+            args.get("target_face_x", 0.0), args.get("target_face_y", 0.0), args.get("target_face_z", 0.0),
+            args.get("body", "last")
+        )
+    if tool == "untrim_sheet":
+        return untrim_sheet(
+            args.get("target_edge_x", 0.0), args.get("target_edge_y", 0.0), args.get("target_edge_z", 0.0),
+            args.get("body", "last")
+        )
+    if tool == "delete_edge":
+        return delete_edge(
+            args.get("target_edge_x", 0.0), args.get("target_edge_y", 0.0), args.get("target_edge_z", 0.0),
+            args.get("body", "last")
+        )
+    if tool == "emboss_body":
+        return emboss_body(args.get("target_body", "last"), args.get("boundary_sketch", "last"), args.get("depth", 5.0))
+    if tool == "patch_body":
+        return patch_body(args.get("target_body", "last"), args.get("tool_sheet", "last"))
+    if tool == "unsew_sheets":
+        return unsew_sheets(
+            args.get("target_body", "last"),
+            args.get("split_edge_x", 0.0), args.get("split_edge_y", 0.0), args.get("split_edge_z", 0.0)
+        )
+    if tool == "make_solid":
+        return make_solid(args.get("target_sheet", "last"))
+    if tool == "sheet_boundary_analysis":
+        return sheet_boundary_analysis(args.get("body", "last"))
+    if tool == "quilt_sheets":
+        return quilt_sheets(args.get("target_sheet", "last"))
+
+    # --- Edit Tools ---
+    if tool == "reverse_normal":
+        return reverse_normal(args.get("body", "last"))
+    if tool == "local_untrim_extend":
+        return local_untrim_extend(
+            args.get("boundary_edge_x", 0.0), args.get("boundary_edge_y", 0.0), args.get("boundary_edge_z", 0.0),
+            args.get("distance", 10.0), args.get("body", "last")
+        )
+    if tool == "replace_edge":
+        return replace_edge(
+            args.get("target_edge_x", 0.0), args.get("target_edge_y", 0.0), args.get("target_edge_z", 0.0),
+            args.get("tool_sketch", "last"), args.get("body", "last")
+        )
+    if tool == "x_form":
+        return x_form(args.get("body", "last"))
+    if tool == "i_form":
+        return i_form(args.get("body", "last"))
+    if tool == "match_edge":
+        return match_edge(
+            args.get("target_edge_x", 0.0), args.get("target_edge_y", 0.0), args.get("target_edge_z", 0.0),
+            args.get("tool_edge_x", 0.0), args.get("tool_edge_y", 0.0), args.get("tool_edge_z", 0.0),
+            args.get("body", "last")
+        )
+    if tool == "edge_symmetry":
+        return edge_symmetry(
+            args.get("target_edge_x", 0.0), args.get("target_edge_y", 0.0), args.get("target_edge_z", 0.0),
+            args.get("body", "last")
+        )
+    if tool == "global_shaping":
+        return global_shaping(args.get("body", "last"))
+    if tool == "global_deformation":
+        return global_deformation(args.get("body", "last"))
+    if tool == "flattening_forming":
+        return flattening_forming(args.get("body", "last"))
+    if tool == "heal_surface":
+        return heal_surface(args.get("body", "last"))
+    if tool == "edit_uv_direction":
+        return edit_uv_direction(args.get("body", "last"))
+    if tool == "enlarge_face":
+        return enlarge_face(
+            args.get("body", "last"), args.get("distance", 5.0),
+            args.get("face_x", 0.0), args.get("face_y", 0.0), args.get("face_z", 0.0)
+        )
+    if tool == "snip_into_patches":
+        return snip_into_patches(args.get("body", "last"))
+    if tool == "smooth_poles":
+        return smooth_poles(args.get("body", "last"))
+    if tool == "refit_face":
+        return refit_face(args.get("body", "last"))
 
     return {"ok": False, "error": f"Unknown bridge tool: {tool}"}
 

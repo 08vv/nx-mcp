@@ -77,6 +77,7 @@ class _FeaturesCollection:
     def _builder(self):
         builder = MagicMock()
         builder.CommitFeature = MagicMock(return_value=MagicMock())
+        builder.Commit = MagicMock(return_value=MagicMock())
         builder.Destroy = MagicMock()
         return builder
 
@@ -106,6 +107,11 @@ class _FeaturesCollection:
 
     def ToArray(self):
         return []
+
+    def __getattr__(self, name):
+        if name.startswith("Create") or name.endswith("Builder"):
+            return lambda *args, **kwargs: self._builder()
+        raise AttributeError(name)
 
 
 class _SketchCollection:

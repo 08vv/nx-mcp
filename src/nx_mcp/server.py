@@ -1,6 +1,6 @@
 import json, os, sys, logging
 
-from nx_mcp.tools import file_ops, sketch, modeling, assembly, measure, utility  # noqa
+from nx_mcp.tools import file_ops, sketch, modeling, assembly, measure, utility, surface_modeling, combine_operations, edit_operations  # noqa
 from nx_mcp.tools.registry import ToolRegistry
 
 logging.basicConfig(level=logging.DEBUG, stream=sys.stderr,
